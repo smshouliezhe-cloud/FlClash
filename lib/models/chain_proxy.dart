@@ -1,3 +1,15 @@
+enum ChainProxyAppMode {
+  all,
+  selected;
+
+  static ChainProxyAppMode fromJson(Object? value) {
+    return switch (value) {
+      'selected' => ChainProxyAppMode.selected,
+      _ => ChainProxyAppMode.all,
+    };
+  }
+}
+
 class ChainProxySettings {
   final bool enabled;
   final String sourceGroup;
@@ -7,6 +19,8 @@ class ChainProxySettings {
   final String password;
   final bool udp;
   final bool strict;
+  final ChainProxyAppMode appMode;
+  final List<String> appPackages;
 
   const ChainProxySettings({
     this.enabled = false,
@@ -17,6 +31,8 @@ class ChainProxySettings {
     this.password = '',
     this.udp = true,
     this.strict = true,
+    this.appMode = ChainProxyAppMode.all,
+    this.appPackages = const [],
   });
 
   bool get isComplete =>
@@ -34,6 +50,8 @@ class ChainProxySettings {
     String? password,
     bool? udp,
     bool? strict,
+    ChainProxyAppMode? appMode,
+    List<String>? appPackages,
   }) {
     return ChainProxySettings(
       enabled: enabled ?? this.enabled,
@@ -44,6 +62,8 @@ class ChainProxySettings {
       password: password ?? this.password,
       udp: udp ?? this.udp,
       strict: strict ?? this.strict,
+      appMode: appMode ?? this.appMode,
+      appPackages: appPackages ?? this.appPackages,
     );
   }
 
@@ -56,9 +76,20 @@ class ChainProxySettings {
     'password': password,
     'udp': udp,
     'strict': strict,
+    'appMode': appMode.name,
+    'appPackages': appPackages,
   };
 
   factory ChainProxySettings.fromJson(Map<String, Object?> json) {
+    final rawPackages = json['appPackages'];
+    final appPackages = rawPackages is List
+        ? rawPackages
+              .whereType<Object>()
+              .map((item) => item.toString().trim())
+              .where((item) => item.isNotEmpty)
+              .toSet()
+              .toList()
+        : <String>[];
     return ChainProxySettings(
       enabled: json['enabled'] == true,
       // sourceProxy is kept as a one-time compatibility fallback for builds
@@ -72,6 +103,8 @@ class ChainProxySettings {
       password: json['password'] as String? ?? '',
       udp: json['udp'] != false,
       strict: json['strict'] != false,
+      appMode: ChainProxyAppMode.fromJson(json['appMode']),
+      appPackages: appPackages,
     );
   }
 }
