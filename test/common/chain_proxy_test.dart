@@ -27,11 +27,18 @@ proxies:
     port: 10001
     cipher: aes-128-gcm
     password: test
+  - name: Airport-B
+    type: ss
+    server: 127.0.0.1
+    port: 10002
+    cipher: aes-128-gcm
+    password: test
 proxy-groups:
   - name: Proxy
     type: select
     proxies:
       - Airport-A
+      - Airport-B
 rules:
   - MATCH,Proxy
 ''';
@@ -41,10 +48,10 @@ rules:
     expect(applyChainProxyYaml(source, settings, 1), source);
   });
 
-  test('injects residential socks5 with airport dialer proxy', () {
+  test('residential socks5 uses airport selector group as dialer', () {
     const settings = ChainProxySettings(
       enabled: true,
-      sourceProxy: 'Airport-A',
+      sourceGroup: 'Proxy',
       server: '10.0.0.8',
       port: 1080,
       username: 'user',
@@ -64,16 +71,16 @@ rules:
     expect(exit['username'], 'user');
     expect(exit['password'], 'pass');
     expect(exit['udp'], true);
-    expect(exit['dialer-proxy'], 'Airport-A');
+    expect(exit['dialer-proxy'], 'Proxy');
     expect(map['mode'], 'rule');
     final rules = loadYaml(output)['rules'] as YamlList;
     expect(rules, ['MATCH,__FLCLASH_CHAIN_EXIT_42']);
   });
 
-  test('missing airport source fails instead of falling back', () {
+  test('a fixed node is rejected because the chain must follow a group', () {
     const settings = ChainProxySettings(
       enabled: true,
-      sourceProxy: 'Deleted-Airport',
+      sourceGroup: 'Airport-A',
       server: '10.0.0.8',
       port: 1080,
     );
@@ -81,5 +88,28 @@ rules:
       () => applyChainProxyYaml(source, settings, 1),
       throwsA(isA<StateError>()),
     );
+  });
+
+  test('missing airport group fails instead of falling back', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      sourceGroup: 'Deleted-Group',
+      server: '10.0.0.8',
+      port: 1080,
+    );
+    expect(
+      () => applyChainProxyYaml(source, settings, 1),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('legacy sourceProxy preference migrates to sourceGroup', () {
+    final settings = ChainProxySettings.fromJson({
+      'enabled': true,
+      'sourceProxy': 'Proxy',
+      'server': '10.0.0.8',
+      'port': 1080,
+    });
+    expect(settings.sourceGroup, 'Proxy');
   });
 }
