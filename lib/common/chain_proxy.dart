@@ -27,58 +27,22 @@ Object? _normalizeYaml(Object? value) {
 String chainProxyOutboundName(int profileId) =>
     '__FLCLASH_CHAIN_EXIT_$profileId';
 
-List<dynamic> _selectedAppRules(
-  Map<String, dynamic> raw,
-  ChainProxySettings settings,
+String _rewriteRuleTarget(
+  String rule,
+  String sourceGroup,
   String outboundName,
 ) {
-  final packageNames = settings.appPackages
-      .map((item) => item.trim())
-      .where((item) => item.isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort();
-  if (packageNames.isEmpty) {
-    throw StateError('仅选中应用模式至少需要选择一个应用');
+  final noResolveSuffix = ',$sourceGroup,no-resolve';
+  if (rule.endsWith(noResolveSuffix)) {
+    return '${rule.substring(0, rule.length - noResolveSuffix.length)},$outboundName,no-resolve';
   }
 
-  final originalMode = raw['mode']?.toString().trim().toLowerCase() ?? 'rule';
-  final originalRules = List<dynamic>.from(
-    raw['rules'] as List? ?? const <dynamic>[],
-  );
-  final appRules = packageNames
-      .map((packageName) => 'PROCESS-NAME,$packageName,$outboundName')
-      .toList();
-
-  // PROCESS-NAME is intentionally used instead of UID. FlClash already
-  // resolves Android package names for process rules, while UID routing has
-  // had Android-version-specific issues. Put the app rules first so selected
-  // packages cannot be captured by an earlier subscription rule.
-  if (originalMode == 'direct') {
-    return <dynamic>[...appRules, 'MATCH,DIRECT'];
+  final targetSuffix = ',$sourceGroup';
+  if (rule.endsWith(targetSuffix)) {
+    return '${rule.substring(0, rule.length - targetSuffix.length)},$outboundName';
   }
 
-  // For rule mode preserve the subscription's entire routing policy for every
-  // unselected app. If a profile has no rules, explicitly fall back to DIRECT
-  // instead of accidentally making the residential chain global.
-  if (originalMode == 'rule') {
-    return <dynamic>[
-      ...appRules,
-      ...originalRules,
-      if (originalRules.isEmpty) 'MATCH,DIRECT',
-    ];
-  }
-
-  // Global mode does not have a portable rule-mode equivalent that preserves
-  // the user's current GLOBAL selection across all Clash-compatible cores.
-  // Preserve the subscription rule set instead of guessing a target. This is
-  // deterministic and, most importantly, never expands the residential chain
-  // beyond the explicitly selected applications.
-  return <dynamic>[
-    ...appRules,
-    ...originalRules,
-    if (originalRules.isEmpty) 'MATCH,DIRECT',
-  ];
+  return rule;
 }
 
 String applyChainProxyYaml(
@@ -132,10 +96,9 @@ String applyChainProxyYaml(
     'server': settings.server.trim(),
     'port': settings.port,
     'udp': settings.udp,
-    // Mihomo allows dialer-proxy to reference a proxy group. Binding the
-    // residential exit to the selector means normal node switching inside
-    // FlClash immediately changes the airport hop without touching this
-    // chain configuration.
+    // The residential SOCKS5 is always reached through the currently selected
+    // node of the airport group. Switching the group selection therefore
+    // changes the first hop without changing chain settings.
     'dialer-proxy': sourceGroup,
     if (settings.username.trim().isNotEmpty)
       'username': settings.username.trim(),
@@ -144,33 +107,31 @@ String applyChainProxyYaml(
 
   raw['proxies'] = [...proxies, outbound];
 
-  if (settings.appMode == ChainProxyAppMode.selected) {
-    raw['mode'] = 'rule';
-    raw['rules'] = _selectedAppRules(raw, settings, outboundName);
-    return yaml.encode(raw);
+  final originalRules = List<dynamic>.from(
+    raw['rules'] as List? ?? const <dynamic>[],
+  );
+  if (originalRules.isEmpty) {
+    throw StateError('当前配置没有可跟随的规则');
   }
 
-  if (settings.strict) {
-    // Leak-proof all-app mode: force the core into rule mode and route every
-    // connection through the residential SOCKS5 outbound. Existing rule
-    // routing is intentionally bypassed so no traffic silently exits via the
-    // airport selector alone.
-    raw['mode'] = 'rule';
-    raw['rules'] = ['MATCH,$outboundName'];
-  } else {
-    final rules = List<String>.from(raw['rules'] as List? ?? const []);
-    var replaced = false;
-    for (var i = rules.length - 1; i >= 0; i--) {
-      final parts = rules[i].split(',');
-      if (parts.isNotEmpty && parts.first.trim().toUpperCase() == 'MATCH') {
-        rules[i] = 'MATCH,$outboundName';
-        replaced = true;
-        break;
-      }
-    }
-    if (!replaced) rules.add('MATCH,$outboundName');
-    raw['rules'] = rules;
+  var replacedCount = 0;
+  final rules = originalRules.map((item) {
+    if (item is! String) return item;
+    final rewritten = _rewriteRuleTarget(item, sourceGroup, outboundName);
+    if (rewritten != item) replacedCount++;
+    return rewritten;
+  }).toList();
+
+  if (replacedCount == 0) {
+    throw StateError('当前规则未引用机场代理组：$sourceGroup');
   }
+
+  // Rule-follow mode: keep the subscription's routing policy intact. Only
+  // rules whose target is the selected airport group are redirected to the
+  // residential chained outbound. DIRECT/REJECT and every unrelated rule are
+  // preserved exactly as authored by the subscription.
+  raw['mode'] = 'rule';
+  raw['rules'] = rules;
 
   return yaml.encode(raw);
 }
