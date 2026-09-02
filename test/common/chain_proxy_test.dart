@@ -54,10 +54,8 @@ rules:
     );
     final output = applyChainProxyYaml(source, settings, 42);
     final map = _normalize(loadYaml(output));
-    final proxies = (map['proxies'] as YamlList?) ??
-        (loadYaml(output)['proxies'] as YamlList);
+    final proxies = map['proxies'] as List<dynamic>;
     final exit = proxies
-        .cast<dynamic>()
         .whereType<YamlMap>()
         .firstWhere((item) => item['name'] == '__FLCLASH_CHAIN_EXIT_42');
     expect(exit['type'], 'socks5');
