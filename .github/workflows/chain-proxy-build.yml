@@ -61,14 +61,14 @@ jobs:
       - name: Chain proxy tests
         run: flutter test test/common/chain_proxy_test.dart --reporter expanded
 
-      - name: Build Android
-        run: dart setup.dart android -v
+      - name: Build Android ARM64
+        run: dart setup.dart android --arch arm64 -v
 
       - name: Upload Android build
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FlClash-chain-proxy-android
+          name: FlClash-chain-proxy-android-arm64
           path: |
             dist/**
             build/app/outputs/flutter-apk/*.apk
