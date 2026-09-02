@@ -43,6 +43,10 @@ proxy-groups:
     type: select
     proxies:
       - Airport-B
+  - name: Unused
+    type: select
+    proxies:
+      - Airport-A
 rules:
   - DOMAIN-SUFFIX,example.cn,DIRECT
   - DOMAIN-SUFFIX,blocked.example,REJECT
@@ -157,7 +161,13 @@ proxy-groups:
     );
     expect(
       () => applyChainProxyYaml(source, settings, 10),
-      throwsA(isA<StateError>()),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('未引用机场代理组'),
+        ),
+      ),
     );
   });
 
