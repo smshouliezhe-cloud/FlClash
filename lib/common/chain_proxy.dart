@@ -62,9 +62,9 @@ String applyChainProxyYaml(
     }
   }
 
-  final sourceName = settings.sourceProxy.trim();
-  if (!proxyNames.contains(sourceName) && !groupNames.contains(sourceName)) {
-    throw StateError('前置节点不存在：$sourceName');
+  final sourceGroup = settings.sourceGroup.trim();
+  if (!groupNames.contains(sourceGroup)) {
+    throw StateError('机场代理组不存在：$sourceGroup');
   }
 
   final outboundName = chainProxyOutboundName(profileId);
@@ -78,7 +78,11 @@ String applyChainProxyYaml(
     'server': settings.server.trim(),
     'port': settings.port,
     'udp': settings.udp,
-    'dialer-proxy': sourceName,
+    // Mihomo allows dialer-proxy to reference a proxy group. Binding the
+    // residential exit to the selector means normal node switching inside
+    // FlClash immediately changes the airport hop without touching this
+    // chain configuration.
+    'dialer-proxy': sourceGroup,
     if (settings.username.trim().isNotEmpty)
       'username': settings.username.trim(),
     if (settings.password.isNotEmpty) 'password': settings.password,
@@ -90,7 +94,7 @@ String applyChainProxyYaml(
     // Leak-proof mode: force the core into rule mode and route every unmatched
     // connection through the residential SOCKS5 outbound. Existing rule
     // routing is intentionally bypassed so no traffic silently exits via the
-    // airport node alone.
+    // airport selector alone.
     raw['mode'] = 'rule';
     raw['rules'] = ['MATCH,$outboundName'];
   } else {
