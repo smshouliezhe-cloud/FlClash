@@ -23,10 +23,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
   bool _saving = false;
   bool _enabled = false;
   bool _udp = true;
-  bool _strict = true;
   String? _sourceGroup;
-  ChainProxyAppMode _appMode = ChainProxyAppMode.all;
-  Set<String> _appPackages = <String>{};
 
   @override
   void initState() {
@@ -50,15 +47,11 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
       return;
     }
     final settings = await preferences.getChainProxySettings(profileId);
-    await ref.read(systemActionProvider.notifier).getPackages();
     if (!mounted) return;
     setState(() {
       _enabled = settings.enabled;
       _udp = settings.udp;
-      _strict = settings.strict;
       _sourceGroup = settings.sourceGroup.isEmpty ? null : settings.sourceGroup;
-      _appMode = settings.appMode;
-      _appPackages = settings.appPackages.toSet();
       _serverController.text = settings.server;
       _portController.text = settings.port == 0 ? '' : settings.port.toString();
       _usernameController.text = settings.username;
@@ -77,25 +70,6 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     return values;
   }
 
-  String _appModeLabel(ChainProxyAppMode mode) {
-    return switch (mode) {
-      ChainProxyAppMode.all => '全部应用',
-      ChainProxyAppMode.selected => '仅选中应用',
-    };
-  }
-
-  Future<void> _selectApps() async {
-    final selected = await Navigator.of(context).push<Set<String>>(
-      MaterialPageRoute(
-        builder: (_) => ChainProxyAppSelectorView(
-          initialSelected: _appPackages,
-        ),
-      ),
-    );
-    if (!mounted || selected == null) return;
-    setState(() => _appPackages = selected);
-  }
-
   Future<void> _save() async {
     if (_saving) return;
     final profileId = ref.read(currentProfileIdProvider);
@@ -108,14 +82,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
       dialogs.showNotifier('请选择机场代理组');
       return;
     }
-    if (_enabled &&
-        _appMode == ChainProxyAppMode.selected &&
-        _appPackages.isEmpty) {
-      dialogs.showNotifier('仅选中应用模式至少需要选择一个应用');
-      return;
-    }
 
-    final packages = _appPackages.toList()..sort();
     final settings = ChainProxySettings(
       enabled: _enabled,
       sourceGroup: _sourceGroup ?? '',
@@ -124,9 +91,9 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
       username: _usernameController.text.trim(),
       password: _passwordController.text,
       udp: _udp,
-      strict: _strict,
-      appMode: _appMode,
-      appPackages: packages,
+      strict: false,
+      appMode: ChainProxyAppMode.all,
+      appPackages: const [],
     );
 
     setState(() => _saving = true);
@@ -136,15 +103,10 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
           .read(setupActionProvider.notifier)
           .applyProfile(force: true);
       if (!applied) {
-        dialogs.showNotifier('链式代理配置校验或应用失败，请检查代理组、应用范围和 SOCKS5 参数');
+        dialogs.showNotifier('链式代理应用失败，请确认订阅规则中使用了所选机场代理组');
         return;
       }
-      final scopeText = _appMode == ChainProxyAppMode.all
-          ? '全部应用'
-          : '${_appPackages.length} 个选中应用';
-      dialogs.showNotifier(
-        _enabled ? '链式代理已启用并应用：$scopeText' : '链式代理已关闭',
-      );
+      dialogs.showNotifier(_enabled ? '链式代理已按原订阅规则启用' : '链式代理已关闭');
       if (mounted) context.safeNestedPop();
     } catch (e) {
       dialogs.showNotifier('链式代理应用失败：$e');
@@ -158,6 +120,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
+
     final groups = _availableGroups();
     if (_sourceGroup != null && !groups.contains(_sourceGroup)) {
       groups.insert(0, _sourceGroup!);
@@ -189,7 +152,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('启用链式代理'),
-              subtitle: const Text('手机 → 机场代理组当前节点 → 住宅 SOCKS5 → Internet'),
+              subtitle: const Text('原订阅规则 → 机场当前节点 → 住宅 SOCKS5'),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
@@ -199,7 +162,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: '机场代理组',
-                helperText: '绑定代理组后，在代理页切换节点无需重新设置链式代理',
+                helperText: '原规则中指向这个代理组的流量才进入住宅链式出口',
               ),
               items: groups
                   .map(
@@ -221,45 +184,6 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
               Text(
                 '当前前置节点：$selectedNode',
                 style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            const SizedBox(height: 16),
-            DropdownButtonFormField<ChainProxyAppMode>(
-              initialValue: _appMode,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: '应用范围',
-                helperText: '仅选中应用时，其他 App 继续使用原订阅规则，不经过住宅 SOCKS5',
-              ),
-              items: ChainProxyAppMode.values
-                  .map(
-                    (mode) => DropdownMenuItem<ChainProxyAppMode>(
-                      value: mode,
-                      child: Text(_appModeLabel(mode)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: _enabled
-                  ? (value) {
-                      if (value == null) return;
-                      setState(() => _appMode = value);
-                    }
-                  : null,
-            ),
-            if (_appMode == ChainProxyAppMode.selected) ...[
-              const SizedBox(height: 8),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                enabled: _enabled,
-                leading: const Icon(Icons.apps_outlined),
-                title: const Text('选择链式应用'),
-                subtitle: Text(
-                  _appPackages.isEmpty
-                      ? '尚未选择应用'
-                      : '已选择 ${_appPackages.length} 个应用',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _enabled ? _selectApps : null,
               ),
             ],
             const SizedBox(height: 16),
@@ -315,201 +239,18 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('SOCKS5 UDP'),
-              subtitle: const Text('开启后允许支持 UDP 的应用通过住宅 SOCKS5'),
+              subtitle: const Text('开启后允许匹配代理规则的 UDP 流量通过住宅 SOCKS5'),
               value: _udp,
               onChanged: _enabled ? (value) => setState(() => _udp = value) : null,
             ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('严格模式（推荐）'),
-              subtitle: Text(
-                _appMode == ChainProxyAppMode.all
-                    ? '全部应用模式下强制 MATCH 走住宅出口，避免 SOCKS5 失效时退回机场直出'
-                    : '选中应用直接绑定住宅出口；住宅 SOCKS5 失效时不会自动退回机场直出',
-              ),
-              value: _strict,
-              onChanged: _enabled
-                  ? (value) => setState(() => _strict = value)
-                  : null,
-            ),
             const SizedBox(height: 12),
             const Text(
-              '启用后不会修改机场订阅。链式代理绑定的是机场代理组，不是某一个节点；你在 FlClash 代理页正常切换该组节点，前置机场会自动跟随。仅选中应用模式使用 Android 包名生成 PROCESS-NAME 规则，并放在订阅规则最前面；未选中的应用继续使用原订阅规则。订阅刷新后住宅 SOCKS5 和应用列表仍然保留。',
+              '链式代理现在完全跟随原订阅规则。原规则为 DIRECT 或 REJECT 的流量保持不变；只有原规则目标为所选机场代理组的流量会改走“机场当前节点 → 住宅 SOCKS5”。在代理页切换机场节点无需重新设置，订阅刷新后住宅 SOCKS5 设置仍会保留。',
               style: TextStyle(fontSize: 13),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class ChainProxyAppSelectorView extends ConsumerStatefulWidget {
-  final Set<String> initialSelected;
-
-  const ChainProxyAppSelectorView({
-    super.key,
-    required this.initialSelected,
-  });
-
-  @override
-  ConsumerState<ChainProxyAppSelectorView> createState() =>
-      _ChainProxyAppSelectorViewState();
-}
-
-class _ChainProxyAppSelectorViewState
-    extends ConsumerState<ChainProxyAppSelectorView> {
-  late Set<String> _selected;
-  bool _loading = true;
-  bool _permissionGranted = true;
-  String _query = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = Set<String>.from(widget.initialSelected);
-    Future.microtask(_loadPackages);
-  }
-
-  Future<void> _loadPackages({bool force = false}) async {
-    final action = ref.read(systemActionProvider.notifier);
-    final packages = force
-        ? await action.refreshPackages()
-        : await action.getPackages();
-    final granted =
-        packages.isNotEmpty || await action.isInstalledAppsPermissionGranted();
-    if (!mounted) return;
-    setState(() {
-      _permissionGranted = granted;
-      _loading = false;
-    });
-  }
-
-  Future<void> _requestPermission() async {
-    final action = ref.read(systemActionProvider.notifier);
-    final granted = await action.requestInstalledAppsPermission();
-    if (!mounted) return;
-    if (!granted) {
-      dialogs.showNotifier('未获得已安装应用读取权限');
-      return;
-    }
-    setState(() => _loading = true);
-    await _loadPackages(force: true);
-  }
-
-  void _toggleVisible(List<Package> packages) {
-    final names = packages.map((item) => item.packageName).toSet();
-    setState(() {
-      if (_selected.containsAll(names)) {
-        _selected.removeAll(names);
-      } else {
-        _selected.addAll(names);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final packages = ref.watch(packagesProvider).toList()
-      ..sort(
-        (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
-      );
-    final query = _query.trim().toLowerCase();
-    final visiblePackages = query.isEmpty
-        ? packages
-        : packages
-              .where(
-                (item) =>
-                    item.label.toLowerCase().contains(query) ||
-                    item.packageName.toLowerCase().contains(query),
-              )
-              .toList();
-    final allVisibleSelected =
-        visiblePackages.isNotEmpty &&
-        _selected.containsAll(
-          visiblePackages.map((item) => item.packageName),
-        );
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('选择链式应用（${_selected.length}）'),
-        actions: [
-          IconButton(
-            tooltip: allVisibleSelected ? '取消当前列表全选' : '当前列表全选',
-            onPressed: visiblePackages.isEmpty
-                ? null
-                : () => _toggleVisible(visiblePackages),
-            icon: Icon(
-              allVisibleSelected ? Icons.deselect : Icons.select_all,
-            ),
-          ),
-          IconButton(
-            tooltip: '完成',
-            onPressed: () => Navigator.of(context).pop(_selected),
-            icon: const Icon(Icons.check),
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : !_permissionGranted && packages.isEmpty
-          ? Center(
-              child: FilledButton.icon(
-                onPressed: _requestPermission,
-                icon: const Icon(Icons.lock_open),
-                label: const Text('授权读取已安装应用'),
-              ),
-            )
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.search),
-                      labelText: '搜索应用或包名',
-                    ),
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                ),
-                Expanded(
-                  child: visiblePackages.isEmpty
-                      ? const Center(child: Text('没有匹配的应用'))
-                      : ListView.builder(
-                          itemCount: visiblePackages.length,
-                          itemBuilder: (_, index) {
-                            final package = visiblePackages[index];
-                            final checked = _selected.contains(
-                              package.packageName,
-                            );
-                            return CheckboxListTile(
-                              value: checked,
-                              title: Text(
-                                package.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                package.packageName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              onChanged: (_) {
-                                setState(() {
-                                  if (checked) {
-                                    _selected.remove(package.packageName);
-                                  } else {
-                                    _selected.add(package.packageName);
-                                  }
-                                });
-                              },
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
     );
   }
 }
