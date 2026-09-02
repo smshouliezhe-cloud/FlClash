@@ -27,6 +27,60 @@ Object? _normalizeYaml(Object? value) {
 String chainProxyOutboundName(int profileId) =>
     '__FLCLASH_CHAIN_EXIT_$profileId';
 
+List<dynamic> _selectedAppRules(
+  Map<String, dynamic> raw,
+  ChainProxySettings settings,
+  String outboundName,
+) {
+  final packageNames = settings.appPackages
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
+  if (packageNames.isEmpty) {
+    throw StateError('仅选中应用模式至少需要选择一个应用');
+  }
+
+  final originalMode = raw['mode']?.toString().trim().toLowerCase() ?? 'rule';
+  final originalRules = List<dynamic>.from(
+    raw['rules'] as List? ?? const <dynamic>[],
+  );
+  final appRules = packageNames
+      .map((packageName) => 'PROCESS-NAME,$packageName,$outboundName')
+      .toList();
+
+  // PROCESS-NAME is intentionally used instead of UID. FlClash already
+  // resolves Android package names for process rules, while UID routing has
+  // had Android-version-specific issues. Put the app rules first so selected
+  // packages cannot be captured by an earlier subscription rule.
+  if (originalMode == 'direct') {
+    return <dynamic>[...appRules, 'MATCH,DIRECT'];
+  }
+
+  // For rule mode preserve the subscription's entire routing policy for every
+  // unselected app. If a profile has no rules, explicitly fall back to DIRECT
+  // instead of accidentally making the residential chain global.
+  if (originalMode == 'rule') {
+    return <dynamic>[
+      ...appRules,
+      ...originalRules,
+      if (originalRules.isEmpty) 'MATCH,DIRECT',
+    ];
+  }
+
+  // Global mode does not have a portable rule-mode equivalent that preserves
+  // the user's current GLOBAL selection across all Clash-compatible cores.
+  // Preserve the subscription rule set instead of guessing a target. This is
+  // deterministic and, most importantly, never expands the residential chain
+  // beyond the explicitly selected applications.
+  return <dynamic>[
+    ...appRules,
+    ...originalRules,
+    if (originalRules.isEmpty) 'MATCH,DIRECT',
+  ];
+}
+
 String applyChainProxyYaml(
   String sourceYaml,
   ChainProxySettings settings,
@@ -90,8 +144,14 @@ String applyChainProxyYaml(
 
   raw['proxies'] = [...proxies, outbound];
 
+  if (settings.appMode == ChainProxyAppMode.selected) {
+    raw['mode'] = 'rule';
+    raw['rules'] = _selectedAppRules(raw, settings, outboundName);
+    return yaml.encode(raw);
+  }
+
   if (settings.strict) {
-    // Leak-proof mode: force the core into rule mode and route every unmatched
+    // Leak-proof all-app mode: force the core into rule mode and route every
     // connection through the residential SOCKS5 outbound. Existing rule
     // routing is intentionally bypassed so no traffic silently exits via the
     // airport selector alone.
