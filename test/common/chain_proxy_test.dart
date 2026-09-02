@@ -40,6 +40,7 @@ proxy-groups:
       - Airport-A
       - Airport-B
 rules:
+  - DOMAIN-SUFFIX,example.cn,DIRECT
   - MATCH,Proxy
 ''';
 
@@ -77,6 +78,93 @@ rules:
     expect(rules, ['MATCH,__FLCLASH_CHAIN_EXIT_42']);
   });
 
+  test('selected apps are chained before original subscription rules', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      sourceGroup: 'Proxy',
+      server: '10.0.0.8',
+      port: 1080,
+      appMode: ChainProxyAppMode.selected,
+      appPackages: ['com.twitter.android', 'com.android.chrome'],
+    );
+    final output = applyChainProxyYaml(source, settings, 7);
+    final parsed = loadYaml(output);
+    final rules = parsed['rules'] as YamlList;
+    expect(parsed['mode'], 'rule');
+    expect(
+      rules,
+      [
+        'PROCESS-NAME,com.android.chrome,__FLCLASH_CHAIN_EXIT_7',
+        'PROCESS-NAME,com.twitter.android,__FLCLASH_CHAIN_EXIT_7',
+        'DOMAIN-SUFFIX,example.cn,DIRECT',
+        'MATCH,Proxy',
+      ],
+    );
+  });
+
+  test('selected app mode never expands to all apps when source has no rules', () {
+    const noRulesSource = '''
+mode: rule
+proxies:
+  - name: Airport-A
+    type: ss
+    server: 127.0.0.1
+    port: 10001
+    cipher: aes-128-gcm
+    password: test
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - Airport-A
+''';
+    const settings = ChainProxySettings(
+      enabled: true,
+      sourceGroup: 'Proxy',
+      server: '10.0.0.8',
+      port: 1080,
+      appMode: ChainProxyAppMode.selected,
+      appPackages: ['com.example.app'],
+    );
+    final output = applyChainProxyYaml(noRulesSource, settings, 8);
+    final rules = loadYaml(output)['rules'] as YamlList;
+    expect(
+      rules,
+      [
+        'PROCESS-NAME,com.example.app,__FLCLASH_CHAIN_EXIT_8',
+        'MATCH,DIRECT',
+      ],
+    );
+  });
+
+  test('selected app mode rejects an empty application list', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      sourceGroup: 'Proxy',
+      server: '10.0.0.8',
+      port: 1080,
+      appMode: ChainProxyAppMode.selected,
+    );
+    expect(
+      () => applyChainProxyYaml(source, settings, 9),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('per-app settings survive json persistence', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      sourceGroup: 'Proxy',
+      server: '10.0.0.8',
+      port: 1080,
+      appMode: ChainProxyAppMode.selected,
+      appPackages: ['com.example.one', 'com.example.two'],
+    );
+    final restored = ChainProxySettings.fromJson(settings.toJson());
+    expect(restored.appMode, ChainProxyAppMode.selected);
+    expect(restored.appPackages, ['com.example.one', 'com.example.two']);
+  });
+
   test('a fixed node is rejected because the chain must follow a group', () {
     const settings = ChainProxySettings(
       enabled: true,
@@ -111,5 +199,7 @@ rules:
       'port': 1080,
     });
     expect(settings.sourceGroup, 'Proxy');
+    expect(settings.appMode, ChainProxyAppMode.all);
+    expect(settings.appPackages, isEmpty);
   });
 }
