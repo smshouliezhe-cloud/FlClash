@@ -1,6 +1,6 @@
 class ChainProxySettings {
   final bool enabled;
-  final String sourceProxy;
+  final String sourceGroup;
   final String server;
   final int port;
   final String username;
@@ -10,7 +10,7 @@ class ChainProxySettings {
 
   const ChainProxySettings({
     this.enabled = false,
-    this.sourceProxy = '',
+    this.sourceGroup = '',
     this.server = '',
     this.port = 0,
     this.username = '',
@@ -20,14 +20,14 @@ class ChainProxySettings {
   });
 
   bool get isComplete =>
-      sourceProxy.trim().isNotEmpty &&
+      sourceGroup.trim().isNotEmpty &&
       server.trim().isNotEmpty &&
       port > 0 &&
       port <= 65535;
 
   ChainProxySettings copyWith({
     bool? enabled,
-    String? sourceProxy,
+    String? sourceGroup,
     String? server,
     int? port,
     String? username,
@@ -37,7 +37,7 @@ class ChainProxySettings {
   }) {
     return ChainProxySettings(
       enabled: enabled ?? this.enabled,
-      sourceProxy: sourceProxy ?? this.sourceProxy,
+      sourceGroup: sourceGroup ?? this.sourceGroup,
       server: server ?? this.server,
       port: port ?? this.port,
       username: username ?? this.username,
@@ -49,7 +49,7 @@ class ChainProxySettings {
 
   Map<String, Object?> toJson() => {
     'enabled': enabled,
-    'sourceProxy': sourceProxy,
+    'sourceGroup': sourceGroup,
     'server': server,
     'port': port,
     'username': username,
@@ -61,7 +61,11 @@ class ChainProxySettings {
   factory ChainProxySettings.fromJson(Map<String, Object?> json) {
     return ChainProxySettings(
       enabled: json['enabled'] == true,
-      sourceProxy: json['sourceProxy'] as String? ?? '',
+      // sourceProxy is kept as a one-time compatibility fallback for builds
+      // produced before chain routing was changed from a fixed node to a
+      // selector group.
+      sourceGroup:
+          json['sourceGroup'] as String? ?? json['sourceProxy'] as String? ?? '',
       server: json['server'] as String? ?? '',
       port: (json['port'] as num?)?.toInt() ?? 0,
       username: json['username'] as String? ?? '',
