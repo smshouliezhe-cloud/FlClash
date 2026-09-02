@@ -82,12 +82,12 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     if (_saving) return;
     final profileId = ref.read(currentProfileIdProvider);
     if (profileId == null) {
-      globalState.showNotifier('请先选择一个配置');
+      dialogs.showNotifier('请先选择一个配置');
       return;
     }
     if (_enabled && _formKey.currentState?.validate() != true) return;
     if (_enabled && (_sourceProxy == null || _sourceProxy!.isEmpty)) {
-      globalState.showNotifier('请选择机场前置节点');
+      dialogs.showNotifier('请选择机场前置节点');
       return;
     }
 
@@ -109,13 +109,13 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
           .read(setupActionProvider.notifier)
           .applyProfile(force: true);
       if (!applied) {
-        globalState.showNotifier('链式代理配置校验或应用失败，请检查节点和 SOCKS5 参数');
+        dialogs.showNotifier('链式代理配置校验或应用失败，请检查节点和 SOCKS5 参数');
         return;
       }
-      globalState.showNotifier(_enabled ? '链式代理已启用并应用' : '链式代理已关闭');
+      dialogs.showNotifier(_enabled ? '链式代理已启用并应用' : '链式代理已关闭');
       if (mounted) context.safeNestedPop();
     } catch (e) {
-      globalState.showNotifier('链式代理应用失败：$e');
+      dialogs.showNotifier('链式代理应用失败：$e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -161,7 +161,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _sourceProxy,
+              initialValue: _sourceProxy,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: '机场前置节点',
