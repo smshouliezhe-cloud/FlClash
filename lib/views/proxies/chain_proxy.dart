@@ -24,7 +24,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
   bool _enabled = false;
   bool _udp = true;
   bool _strict = true;
-  String? _sourceProxy;
+  String? _sourceGroup;
 
   @override
   void initState() {
@@ -53,7 +53,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
       _enabled = settings.enabled;
       _udp = settings.udp;
       _strict = settings.strict;
-      _sourceProxy = settings.sourceProxy.isEmpty ? null : settings.sourceProxy;
+      _sourceGroup = settings.sourceGroup.isEmpty ? null : settings.sourceGroup;
       _serverController.text = settings.server;
       _portController.text = settings.port == 0 ? '' : settings.port.toString();
       _usernameController.text = settings.username;
@@ -62,17 +62,11 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     });
   }
 
-  List<String> _availableNodes() {
-    final groupTypes = GroupType.values.map((item) => item.name).toSet();
+  List<String> _availableGroups() {
     final names = <String>{};
     for (final group in ref.read(groupsProvider)) {
-      for (final proxy in group.all) {
-        if (!groupTypes.contains(proxy.type) &&
-            proxy.name != 'DIRECT' &&
-            proxy.name != 'REJECT') {
-          names.add(proxy.name);
-        }
-      }
+      if (group.name == GroupName.GLOBAL.name || group.all.isEmpty) continue;
+      names.add(group.name);
     }
     final values = names.toList()..sort();
     return values;
@@ -86,14 +80,14 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
       return;
     }
     if (_enabled && _formKey.currentState?.validate() != true) return;
-    if (_enabled && (_sourceProxy == null || _sourceProxy!.isEmpty)) {
-      dialogs.showNotifier('请选择机场前置节点');
+    if (_enabled && (_sourceGroup == null || _sourceGroup!.isEmpty)) {
+      dialogs.showNotifier('请选择机场代理组');
       return;
     }
 
     final settings = ChainProxySettings(
       enabled: _enabled,
-      sourceProxy: _sourceProxy ?? '',
+      sourceGroup: _sourceGroup ?? '',
       server: _serverController.text.trim(),
       port: int.tryParse(_portController.text.trim()) ?? 0,
       username: _usernameController.text.trim(),
@@ -109,7 +103,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
           .read(setupActionProvider.notifier)
           .applyProfile(force: true);
       if (!applied) {
-        dialogs.showNotifier('链式代理配置校验或应用失败，请检查节点和 SOCKS5 参数');
+        dialogs.showNotifier('链式代理配置校验或应用失败，请检查代理组和 SOCKS5 参数');
         return;
       }
       dialogs.showNotifier(_enabled ? '链式代理已启用并应用' : '链式代理已关闭');
@@ -126,10 +120,12 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    final nodes = _availableNodes();
-    if (_sourceProxy != null && !nodes.contains(_sourceProxy)) {
-      nodes.insert(0, _sourceProxy!);
+    final groups = _availableGroups();
+    if (_sourceGroup != null && !groups.contains(_sourceGroup)) {
+      groups.insert(0, _sourceGroup!);
     }
+    final selectedMap = ref.watch(selectedMapProvider);
+    final selectedNode = _sourceGroup == null ? null : selectedMap[_sourceGroup];
 
     return Scaffold(
       appBar: AppBar(
@@ -155,18 +151,19 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('启用链式代理'),
-              subtitle: const Text('手机 → 机场前置节点 → 住宅 SOCKS5 → Internet'),
+              subtitle: const Text('手机 → 机场代理组当前节点 → 住宅 SOCKS5 → Internet'),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              initialValue: _sourceProxy,
+              initialValue: _sourceGroup,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                labelText: '机场前置节点',
+                labelText: '机场代理组',
+                helperText: '绑定代理组后，在代理页切换节点无需重新设置链式代理',
               ),
-              items: nodes
+              items: groups
                   .map(
                     (name) => DropdownMenuItem<String>(
                       value: name,
@@ -175,12 +172,19 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
                   )
                   .toList(),
               onChanged: _enabled
-                  ? (value) => setState(() => _sourceProxy = value)
+                  ? (value) => setState(() => _sourceGroup = value)
                   : null,
-              validator: (_) => _enabled && (_sourceProxy?.isEmpty ?? true)
-                  ? '请选择机场前置节点'
+              validator: (_) => _enabled && (_sourceGroup?.isEmpty ?? true)
+                  ? '请选择机场代理组'
                   : null,
             ),
+            if (selectedNode != null && selectedNode.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '当前前置节点：$selectedNode',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             const SizedBox(height: 16),
             TextFormField(
               controller: _serverController,
@@ -249,7 +253,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             ),
             const SizedBox(height: 12),
             const Text(
-              '启用后不会修改机场订阅。订阅刷新后仍保留本页设置；如果所选机场节点被删除或改名，配置会直接应用失败，不会静默绕过住宅出口。',
+              '启用后不会修改机场订阅。链式代理绑定的是机场代理组，不是某一个节点；你在 FlClash 代理页正常切换该组节点，前置机场会自动跟随。订阅刷新后本页住宅 SOCKS5 设置仍然保留；如果代理组被删除或改名，配置会直接应用失败，不会静默绕过住宅出口。',
               style: TextStyle(fontSize: 13),
             ),
           ],
