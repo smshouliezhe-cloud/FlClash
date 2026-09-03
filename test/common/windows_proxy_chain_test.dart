@@ -1,5 +1,5 @@
-import 'package:fl_clash/common/windows_proxy_chain.dart';
-import 'package:fl_clash/models/windows_proxy_chain.dart';
+import 'package:fl_clash/common/chain_proxy.dart';
+import 'package:fl_clash/models/chain_proxy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
@@ -30,143 +30,76 @@ proxies:
     port: 10002
     cipher: aes-128-gcm
     password: test-b
-  - name: Residential
-    type: socks5
-    server: 10.0.0.8
-    port: 1080
 proxy-groups:
   - name: Proxy
     type: select
     proxies:
       - Airport-A
       - Airport-B
-      - Residential
 rules:
   - DOMAIN-SUFFIX,example.cn,DIRECT
   - MATCH,Proxy
 ''';
 
-  test('disabled chain leaves generated yaml byte-for-byte unchanged', () {
-    expect(
-      applyWindowsProxyChainYaml(source, const WindowsProxyChainSettings()),
-      source,
+  const settings = ChainProxySettings(
+    enabled: true,
+    server: '10.0.0.8',
+    port: 1080,
+    username: 'res-user',
+    password: 'res-pass',
+    udp: true,
+  );
+
+  test('Windows uses the same residential landing chain as Android', () {
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 77));
+    final proxies = (parsed['proxies'] as YamlList).whereType<YamlMap>().toList();
+
+    final airportA = proxies.firstWhere((item) => item['name'] == 'Airport-A');
+    expect(airportA['type'], 'socks5');
+    expect(airportA['server'], '10.0.0.8');
+    expect(airportA['port'], 1080);
+    expect(airportA['username'], 'res-user');
+    expect(airportA['password'], 'res-pass');
+    expect(airportA['udp'], true);
+
+    final hiddenUpstreamName = airportA['dialer-proxy'].toString();
+    expect(hiddenUpstreamName, startsWith('__FLCLASH_CHAIN_UPSTREAM_77_'));
+
+    final hiddenUpstream = proxies.firstWhere(
+      (item) => item['name'] == hiddenUpstreamName,
     );
+    expect(hiddenUpstream['type'], 'ss');
+    expect(hiddenUpstream['server'], '127.0.0.1');
+    expect(hiddenUpstream['port'], 10001);
   });
 
-  test('ordered nodes use Clash Verge dialer-proxy semantics', () {
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Airport-B', 'Residential'],
-      targetGroup: 'Proxy',
-    );
-    final parsed = loadYaml(applyWindowsProxyChainYaml(source, settings));
-    final proxies = parsed['proxies'] as YamlList;
-    final byName = <String, YamlMap>{
-      for (final item in proxies.whereType<YamlMap>()) item['name'].toString(): item,
-    };
-
-    expect(byName['Airport-A']?['dialer-proxy'], isNull);
-    expect(byName['Airport-B']?['dialer-proxy'], 'Airport-A');
-    expect(byName['Residential']?['dialer-proxy'], 'Airport-B');
-  });
-
-  test('rules and proxy groups are not changed by the chain overlay', () {
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Residential'],
-      targetGroup: 'Proxy',
-    );
+  test('ordinary Windows proxy selection stays unchanged', () {
     final before = normalize(loadYaml(source)) as Map<String, dynamic>;
     final after = normalize(
-      loadYaml(applyWindowsProxyChainYaml(source, settings)),
+      loadYaml(applyChainProxyYaml(source, settings, 78)),
     ) as Map<String, dynamic>;
 
     expect(after['rules'], before['rules']);
     expect(after['proxy-groups'], before['proxy-groups']);
     expect(after['mode'], before['mode']);
-    expect(after.keys.toSet(), before.keys.toSet());
   });
 
-  test('missing node fails visibly instead of modifying the subscription', () {
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Deleted-Node'],
-      targetGroup: 'Proxy',
-    );
-    expect(
-      () => applyWindowsProxyChainYaml(source, settings),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('节点已不存在'),
-        ),
-      ),
-    );
+  test('each airport node gets its own residential landing wrapper', () {
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 79));
+    final proxies = (parsed['proxies'] as YamlList).whereType<YamlMap>().toList();
+
+    final airportA = proxies.firstWhere((item) => item['name'] == 'Airport-A');
+    final airportB = proxies.firstWhere((item) => item['name'] == 'Airport-B');
+
+    expect(airportA['type'], 'socks5');
+    expect(airportB['type'], 'socks5');
+    expect(airportA['dialer-proxy'], isNot(airportB['dialer-proxy']));
   });
 
-  test('duplicate nodes are rejected', () {
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Airport-A'],
-      targetGroup: 'Proxy',
-    );
+  test('disabled Windows residential chain leaves yaml untouched', () {
     expect(
-      () => applyWindowsProxyChainYaml(source, settings),
-      throwsA(isA<StateError>()),
-    );
-  });
-
-  test('subscription-authored dialer-proxy is never overwritten', () {
-    const authored = '''
-proxies:
-  - name: Airport-A
-    type: ss
-    server: 127.0.0.1
-    port: 10001
-    cipher: aes-128-gcm
-    password: a
-  - name: Residential
-    type: socks5
-    server: 10.0.0.8
-    port: 1080
-    dialer-proxy: Existing-Upstream
-proxy-groups:
-  - name: Proxy
-    type: select
-    proxies: [Airport-A, Residential]
-rules:
-  - MATCH,Proxy
-''';
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Residential'],
-      targetGroup: 'Proxy',
-    );
-    expect(
-      () => applyWindowsProxyChainYaml(authored, settings),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('已自带 dialer-proxy'),
-        ),
-      ),
-    );
-  });
-
-  test('settings persistence contains no subscription path or delete state', () {
-    const settings = WindowsProxyChainSettings(
-      enabled: true,
-      nodes: ['Airport-A', 'Residential'],
-      targetGroup: 'Proxy',
-    );
-    final json = settings.toJson();
-    expect(json.keys.toSet(), {'enabled', 'nodes', 'targetGroup'});
-    expect(WindowsProxyChainSettings.fromJson(json).nodes, settings.nodes);
-    expect(
-      WindowsProxyChainSettings.fromJson(json).targetGroup,
-      settings.targetGroup,
+      applyChainProxyYaml(source, const ChainProxySettings(), 80),
+      source,
     );
   });
 }
