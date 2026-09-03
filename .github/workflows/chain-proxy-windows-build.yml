@@ -81,7 +81,7 @@ jobs:
           }
 
       - name: Build Windows x64
-        run: dart setup.dart windows --arch amd64 -v
+        run: dart setup.dart windows -v
 
       - name: Upload Windows build
         if: always()
