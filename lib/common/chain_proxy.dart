@@ -24,25 +24,36 @@ Object? _normalizeYaml(Object? value) {
   return value;
 }
 
-String chainProxyOutboundName(int profileId) =>
-    '__FLCLASH_CHAIN_EXIT_$profileId';
+String chainProxyOutboundName(int profileId, int index) =>
+    '__FLCLASH_CHAIN_EXIT_${profileId}_$index';
 
-String _rewriteRuleTarget(
+String? _getRuleProxyTarget(String rule, Set<String> knownTargets) {
+  final parts = rule.split(',');
+  if (parts.length < 2) return null;
+
+  var targetIndex = parts.length - 1;
+  if (parts[targetIndex].trim().toLowerCase() == 'no-resolve') {
+    targetIndex--;
+  }
+  if (targetIndex < 1) return null;
+
+  final target = parts[targetIndex].trim();
+  return knownTargets.contains(target) ? target : null;
+}
+
+String _rewriteRuleProxyTarget(
   String rule,
-  String sourceGroup,
+  String target,
   String outboundName,
 ) {
-  final noResolveSuffix = ',$sourceGroup,no-resolve';
-  if (rule.endsWith(noResolveSuffix)) {
-    return '${rule.substring(0, rule.length - noResolveSuffix.length)},$outboundName,no-resolve';
+  final parts = rule.split(',');
+  var targetIndex = parts.length - 1;
+  if (parts[targetIndex].trim().toLowerCase() == 'no-resolve') {
+    targetIndex--;
   }
-
-  final targetSuffix = ',$sourceGroup';
-  if (rule.endsWith(targetSuffix)) {
-    return '${rule.substring(0, rule.length - targetSuffix.length)},$outboundName';
-  }
-
-  return rule;
+  if (targetIndex < 1 || parts[targetIndex].trim() != target) return rule;
+  parts[targetIndex] = outboundName;
+  return parts.join(',');
 }
 
 String applyChainProxyYaml(
@@ -66,6 +77,12 @@ String applyChainProxyYaml(
   final groups = List<dynamic>.from(
     raw['proxy-groups'] as List? ?? const [],
   );
+  final originalRules = List<dynamic>.from(
+    raw['rules'] as List? ?? const <dynamic>[],
+  );
+  if (originalRules.isEmpty) {
+    throw StateError('当前配置没有可跟随的规则');
+  }
 
   final proxyNames = <String>{};
   for (final item in proxies) {
@@ -79,58 +96,63 @@ String applyChainProxyYaml(
       groupNames.add(item['name'].toString());
     }
   }
+  final knownTargets = <String>{...proxyNames, ...groupNames};
 
-  final sourceGroup = settings.sourceGroup.trim();
-  if (!groupNames.contains(sourceGroup)) {
-    throw StateError('机场代理组不存在：$sourceGroup');
+  // Find every actual proxy/proxy-group target referenced by the subscription
+  // rules. DIRECT/REJECT and other built-in actions are not in knownTargets,
+  // so they remain completely untouched.
+  final usedTargets = <String>{};
+  for (final item in originalRules) {
+    if (item is! String) continue;
+    final target = _getRuleProxyTarget(item, knownTargets);
+    if (target != null) usedTargets.add(target);
+  }
+  if (usedTargets.isEmpty) {
+    throw StateError('当前规则没有可链式代理的代理目标');
   }
 
-  final outboundName = chainProxyOutboundName(profileId);
-  if (proxyNames.contains(outboundName) || groupNames.contains(outboundName)) {
-    throw StateError('链式代理内部节点名称冲突：$outboundName');
+  final sortedTargets = usedTargets.toList()..sort();
+  final targetOutbounds = <String, String>{};
+  final outbounds = <Map<String, dynamic>>[];
+
+  for (var i = 0; i < sortedTargets.length; i++) {
+    final target = sortedTargets[i];
+    final outboundName = chainProxyOutboundName(profileId, i);
+    if (proxyNames.contains(outboundName) || groupNames.contains(outboundName)) {
+      throw StateError('链式代理内部节点名称冲突：$outboundName');
+    }
+    targetOutbounds[target] = outboundName;
+    outbounds.add(<String, dynamic>{
+      'name': outboundName,
+      'type': 'socks5',
+      'server': settings.server.trim(),
+      'port': settings.port,
+      'udp': settings.udp,
+      // The rule's original proxy target becomes the dialer for the shared
+      // residential SOCKS5. Therefore the original selector/group keeps all
+      // of its normal node switching, fallback and url-test behaviour while
+      // the residential SOCKS5 remains the final public egress.
+      'dialer-proxy': target,
+      if (settings.username.trim().isNotEmpty)
+        'username': settings.username.trim(),
+      if (settings.password.isNotEmpty) 'password': settings.password,
+    });
   }
 
-  final outbound = <String, dynamic>{
-    'name': outboundName,
-    'type': 'socks5',
-    'server': settings.server.trim(),
-    'port': settings.port,
-    'udp': settings.udp,
-    // The residential SOCKS5 is always reached through the currently selected
-    // node of the airport group. Switching the group selection therefore
-    // changes the first hop without changing chain settings.
-    'dialer-proxy': sourceGroup,
-    if (settings.username.trim().isNotEmpty)
-      'username': settings.username.trim(),
-    if (settings.password.isNotEmpty) 'password': settings.password,
-  };
-
-  raw['proxies'] = [...proxies, outbound];
-
-  final originalRules = List<dynamic>.from(
-    raw['rules'] as List? ?? const <dynamic>[],
-  );
-  if (originalRules.isEmpty) {
-    throw StateError('当前配置没有可跟随的规则');
-  }
-
-  var replacedCount = 0;
   final rules = originalRules.map((item) {
     if (item is! String) return item;
-    final rewritten = _rewriteRuleTarget(item, sourceGroup, outboundName);
-    if (rewritten != item) replacedCount++;
-    return rewritten;
+    final target = _getRuleProxyTarget(item, knownTargets);
+    if (target == null) return item;
+    final outboundName = targetOutbounds[target];
+    if (outboundName == null) return item;
+    return _rewriteRuleProxyTarget(item, target, outboundName);
   }).toList();
 
-  if (replacedCount == 0) {
-    throw StateError('当前规则未引用机场代理组：$sourceGroup');
-  }
-
-  // Rule-follow mode: keep the subscription's routing policy intact. Only
-  // rules whose target is the selected airport group are redirected to the
-  // residential chained outbound. DIRECT/REJECT and every unrelated rule are
-  // preserved exactly as authored by the subscription.
+  // True rule-follow mode: every rule that originally chose a real proxy or
+  // proxy group now chooses a residential SOCKS5 outbound whose dialer is that
+  // exact original target. DIRECT/REJECT rules and their ordering are kept.
   raw['mode'] = 'rule';
+  raw['proxies'] = [...proxies, ...outbounds];
   raw['rules'] = rules;
 
   return yaml.encode(raw);
