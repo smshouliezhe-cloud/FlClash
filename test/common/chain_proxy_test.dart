@@ -30,15 +30,10 @@ proxy-groups:
     proxies:
       - 🇭🇰 香港节点
       - Airport-B
-  - name: Other
-    type: select
-    proxies:
-      - Airport-B
 rules:
   - DOMAIN-SUFFIX,example.cn,DIRECT
   - DOMAIN-SUFFIX,blocked.example,REJECT
   - RULE-SET,foreign,Proxy,no-resolve
-  - DOMAIN-SUFFIX,other.example,Other
   - DOMAIN,api.example,Airport-A
   - MATCH,Proxy
 ''';
@@ -48,7 +43,7 @@ rules:
     expect(applyChainProxyYaml(source, settings, 1), source);
   });
 
-  test('every real rule proxy target gets its own residential chain', () {
+  test('ordinary subscription keeps rules and groups unchanged', () {
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
@@ -57,76 +52,79 @@ rules:
       password: 'pass',
       udp: true,
     );
-    final output = applyChainProxyYaml(source, settings, 42);
-    final parsed = loadYaml(output);
-    final proxies = parsed['proxies'] as YamlList;
+    final original = loadYaml(source);
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 42));
 
-    final chainExits = proxies.whereType<YamlMap>().where(
-      (item) => item['name'].toString().startsWith('__FLCLASH_CHAIN_EXIT_42_'),
-    );
-    expect(chainExits.length, 3);
+    expect(parsed['mode'], original['mode']);
+    expect(parsed['rules'].toString(), original['rules'].toString());
     expect(
-      chainExits.map((item) => item['dialer-proxy']).toSet(),
-      {'Airport-A', 'Other', 'Proxy'},
+      parsed['proxy-groups'].toString(),
+      original['proxy-groups'].toString(),
     );
-    for (final exit in chainExits) {
-      expect(exit['type'], 'socks5');
-      expect(exit['server'], '10.0.0.8');
-      expect(exit['port'], 1080);
-      expect(exit['username'], 'user');
-      expect(exit['password'], 'pass');
-      expect(exit['udp'], true);
-    }
   });
 
-  test('DIRECT and REJECT stay unchanged while proxy rules are chained', () {
+  test('each visible airport node becomes a residential landing chain', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      server: '10.0.0.8',
+      port: 1080,
+      username: 'user',
+      password: 'pass',
+      udp: true,
+    );
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 42));
+    final proxies = (parsed['proxies'] as YamlList).whereType<YamlMap>().toList();
+
+    final airportA = proxies.firstWhere((item) => item['name'] == 'Airport-A');
+    final airportB = proxies.firstWhere((item) => item['name'] == 'Airport-B');
+    expect(airportA['type'], 'socks5');
+    expect(airportA['server'], '10.0.0.8');
+    expect(airportA['port'], 1080);
+    expect(airportA['username'], 'user');
+    expect(airportA['password'], 'pass');
+    expect(airportA['udp'], true);
+    expect(
+      airportA['dialer-proxy'].toString(),
+      startsWith('__FLCLASH_CHAIN_UPSTREAM_42_'),
+    );
+    expect(
+      airportB['dialer-proxy'].toString(),
+      startsWith('__FLCLASH_CHAIN_UPSTREAM_42_'),
+    );
+
+    final upstreamA = proxies.firstWhere(
+      (item) => item['name'] == airportA['dialer-proxy'],
+    );
+    expect(upstreamA['type'], 'ss');
+    expect(upstreamA['server'], '127.0.0.1');
+    expect(upstreamA['port'], 10001);
+  });
+
+  test('nested selectors automatically select chained leaf nodes', () {
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
       port: 1080,
     );
-    final output = applyChainProxyYaml(source, settings, 7);
-    final parsed = loadYaml(output);
-    final rules = parsed['rules'] as YamlList;
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 8));
+    final groups = (parsed['proxy-groups'] as YamlList).whereType<YamlMap>();
+    final hongKong = groups.firstWhere((item) => item['name'] == '🇭🇰 香港节点');
+    final proxy = groups.firstWhere((item) => item['name'] == 'Proxy');
 
-    expect(parsed['mode'], 'rule');
-    expect(rules[0], 'DOMAIN-SUFFIX,example.cn,DIRECT');
-    expect(rules[1], 'DOMAIN-SUFFIX,blocked.example,REJECT');
-    expect(rules[2].toString(), contains('__FLCLASH_CHAIN_EXIT_7_'));
-    expect(rules[2].toString(), endsWith(',no-resolve'));
-    expect(rules[3].toString(), contains('__FLCLASH_CHAIN_EXIT_7_'));
-    expect(rules[4].toString(), contains('__FLCLASH_CHAIN_EXIT_7_'));
-    expect(rules[5].toString(), contains('__FLCLASH_CHAIN_EXIT_7_'));
-  });
+    expect(hongKong['proxies'], ['Airport-A', 'Airport-B']);
+    expect(proxy['proxies'], ['🇭🇰 香港节点', 'Airport-B']);
 
-  test('nested country selector does not need to be referenced by rules', () {
-    const settings = ChainProxySettings(
-      enabled: true,
-      server: '10.0.0.8',
-      port: 1080,
-    );
-    final output = applyChainProxyYaml(source, settings, 8);
-    final parsed = loadYaml(output);
-    final groups = parsed['proxy-groups'] as YamlList;
-    final proxyGroup = groups
+    final wrappers = (parsed['proxies'] as YamlList)
         .whereType<YamlMap>()
-        .firstWhere((item) => item['name'] == 'Proxy');
-
-    // The subscription hierarchy remains intact: rules still conceptually use
-    // Proxy, and Proxy can keep selecting the nested Hong Kong group. The
-    // residential outbound simply dials through Proxy's current selection.
-    expect(proxyGroup['proxies'], contains('🇭🇰 香港节点'));
-
-    final exits = (parsed['proxies'] as YamlList)
-        .whereType<YamlMap>()
-        .where((item) => item['dialer-proxy'] == 'Proxy')
+        .where((item) => item['name'] == 'Airport-A' || item['name'] == 'Airport-B')
         .toList();
-    expect(exits, hasLength(1));
+    expect(wrappers, hasLength(2));
+    expect(wrappers.every((item) => item['type'] == 'socks5'), true);
   });
 
-  test('profile without rules fails instead of silently becoming global', () {
+  test('profile without rules still chains normal subscription nodes', () {
     const noRulesSource = '''
-mode: rule
+mode: global
 proxies:
   - name: Airport-A
     type: ss
@@ -134,22 +132,31 @@ proxies:
     port: 10001
     cipher: aes-128-gcm
     password: test
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - Airport-A
 ''';
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
       port: 1080,
     );
-    expect(
-      () => applyChainProxyYaml(noRulesSource, settings, 9),
-      throwsA(isA<StateError>()),
-    );
+    final parsed = loadYaml(applyChainProxyYaml(noRulesSource, settings, 9));
+    expect(parsed['mode'], 'global');
+    final airportA = (parsed['proxies'] as YamlList)
+        .whereType<YamlMap>()
+        .firstWhere((item) => item['name'] == 'Airport-A');
+    expect(airportA['type'], 'socks5');
   });
 
-  test('DIRECT-only rules fail visibly because there is nothing to chain', () {
-    const directOnlySource = '''
+  test('explicit direct proxy entries are not turned into residential chains', () {
+    const directSource = '''
 mode: rule
 proxies:
+  - name: MyDirect
+    type: direct
   - name: Airport-A
     type: ss
     server: 127.0.0.1
@@ -157,7 +164,74 @@ proxies:
     cipher: aes-128-gcm
     password: test
 rules:
-  - MATCH,DIRECT
+  - DOMAIN-SUFFIX,lan.example,MyDirect
+  - MATCH,Airport-A
+''';
+    const settings = ChainProxySettings(
+      enabled: true,
+      server: '10.0.0.8',
+      port: 1080,
+    );
+    final parsed = loadYaml(applyChainProxyYaml(directSource, settings, 10));
+    final proxies = (parsed['proxies'] as YamlList).whereType<YamlMap>().toList();
+    expect(
+      proxies.firstWhere((item) => item['name'] == 'MyDirect')['type'],
+      'direct',
+    );
+    expect(
+      proxies.firstWhere((item) => item['name'] == 'Airport-A')['type'],
+      'socks5',
+    );
+    expect((parsed['rules'] as YamlList)[0], 'DOMAIN-SUFFIX,lan.example,MyDirect');
+  });
+
+  test('provider-backed groups use rule-target compatibility wrapper', () {
+    const providerSource = '''
+mode: rule
+proxy-providers:
+  airport:
+    type: http
+    url: https://example.com/sub
+proxy-groups:
+  - name: Proxy
+    type: select
+    use:
+      - airport
+rules:
+  - DOMAIN-SUFFIX,example.cn,DIRECT
+  - MATCH,Proxy
+''';
+    const settings = ChainProxySettings(
+      enabled: true,
+      server: '10.0.0.8',
+      port: 1080,
+    );
+    final parsed = loadYaml(applyChainProxyYaml(providerSource, settings, 11));
+    final rules = parsed['rules'] as YamlList;
+    expect(rules[0], 'DOMAIN-SUFFIX,example.cn,DIRECT');
+    expect(rules[1].toString(), startsWith('MATCH,__FLCLASH_CHAIN_EXIT_11_'));
+
+    final exit = (parsed['proxies'] as YamlList)
+        .whereType<YamlMap>()
+        .firstWhere(
+          (item) => item['name'].toString().startsWith('__FLCLASH_CHAIN_EXIT_11_'),
+        );
+    expect(exit['type'], 'socks5');
+    expect(exit['dialer-proxy'], 'Proxy');
+  });
+
+  test('provider-backed profile without rules fails visibly', () {
+    const providerSource = '''
+mode: global
+proxy-providers:
+  airport:
+    type: http
+    url: https://example.com/sub
+proxy-groups:
+  - name: Proxy
+    type: select
+    use:
+      - airport
 ''';
     const settings = ChainProxySettings(
       enabled: true,
@@ -165,12 +239,12 @@ rules:
       port: 1080,
     );
     expect(
-      () => applyChainProxyYaml(directOnlySource, settings, 10),
+      () => applyChainProxyYaml(providerSource, settings, 12),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          contains('没有可链式代理的代理目标'),
+          contains('动态代理源暂不支持无规则模式'),
         ),
       ),
     );
