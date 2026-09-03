@@ -48,8 +48,37 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 
-      - name: Chain proxy tests
+      - name: Windows chain tests
+        run: flutter test test/common/windows_proxy_chain_test.dart --reporter expanded
+
+      - name: Android landing-chain regression tests
         run: flutter test test/common/chain_proxy_test.dart --reporter expanded
+
+      - name: Verify Windows chain cannot touch profile files
+        shell: pwsh
+        run: |
+          $files = @(
+            'lib/common/windows_proxy_chain.dart',
+            'lib/models/windows_proxy_chain.dart',
+            'lib/views/proxies/windows_proxy_chain.dart'
+          )
+          $forbidden = @(
+            "import 'dart:io'",
+            'profilesPath',
+            'ProfileDao',
+            'ProfilesAction',
+            'deleteProfile',
+            'removeProfile',
+            'checkAndUpdateAndCopy'
+          )
+          foreach ($file in $files) {
+            $text = Get-Content $file -Raw
+            foreach ($term in $forbidden) {
+              if ($text.Contains($term)) {
+                throw "Forbidden profile mutation surface '$term' found in $file"
+              }
+            }
+          }
 
       - name: Build Windows x64
         run: dart setup.dart windows --arch amd64 -v
