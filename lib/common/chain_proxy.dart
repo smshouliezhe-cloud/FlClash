@@ -248,8 +248,13 @@ String applyChainProxyYaml(
     // visible node name while its connection is dialed through the hidden
     // original airport node. The public egress is the residential SOCKS5.
     final upstream = Map<String, dynamic>.from(proxy)..['name'] = upstreamName;
-    transformed.add(upstream);
+
+    // Keep the visible landing wrapper before the hidden raw upstream. Mihomo
+    // resolves dialer-proxy by name after loading the full config, so forward
+    // references are valid. This also makes accidental GLOBAL-mode defaults
+    // prefer the chained node instead of the raw airport node.
     transformed.add(_landingProxy(publicName, upstreamName, settings));
+    transformed.add(upstream);
   }
 
   if (chainIndex == 0) {
