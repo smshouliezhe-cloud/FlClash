@@ -13,9 +13,9 @@ def patch(path: str, old: str, new: str) -> None:
     target.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
-# Export manually-written chain models and runtime YAML overlays. Android and
-# Windows intentionally use separate settings so the two implementations cannot
-# accidentally overwrite each other's persisted state.
+# Export the shared residential landing-chain implementation. Legacy Windows
+# chain types remain exported for source compatibility, but Windows runtime now
+# uses the same ChainProxySettings/applyChainProxyYaml path as Android.
 patch(
     'lib/models/models.dart',
     "export 'clash_config.dart';\n",
@@ -27,9 +27,9 @@ patch(
     "export 'changelog.dart';\nexport 'chain_proxy.dart';\nexport 'windows_proxy_chain.dart';\n",
 )
 
-# Persist chain settings in SharedPreferences only. Neither implementation gets
-# a profile file path, subscription URL, profile database handle or delete API.
-# This is deliberately isolated from Clash Verge's profile cleanup/update code.
+# Persist active residential chain settings in SharedPreferences only. Android
+# and Windows both use chain_proxy_<profileId>. Legacy Windows helpers remain so
+# old saved data/code can coexist without touching profile/subscription files.
 patch(
     'lib/common/preferences.dart',
     "  Future<void> clearPreferences() async {\n",
@@ -105,9 +105,10 @@ patch(
 """,
 )
 
-# The normal FlClash profile pipeline remains authoritative. Chain features are
-# applied only to the final generated runtime YAML. Source subscriptions and
-# profile database rows are never rewritten by this feature.
+# The normal FlClash profile pipeline remains authoritative. On both Windows
+# and Android, apply the same final-YAML residential landing overlay:
+# selector/rule -> visible residential SOCKS5 wrapper -> hidden airport node.
+# Source subscriptions and profile database rows are never rewritten.
 patch(
     'lib/providers/actions/setup.dart',
     "    final res = makeRealProfileTask(\n",
@@ -121,17 +122,7 @@ patch(
 
   Future<String> getProfileWithId""",
     """    );
-    if (system.isWindows) {
-      final windowsChainSettings = await preferences
-          .getWindowsProxyChainSettings(profileId);
-      if (windowsChainSettings.enabled) {
-        final chainedYaml = applyWindowsProxyChainYaml(
-          res.yaml,
-          windowsChainSettings,
-        );
-        res = (yaml: chainedYaml, md5: chainedYaml.toMd5());
-      }
-    } else if (system.isAndroid) {
+    if (system.isWindows || system.isAndroid) {
       final chainSettings = await preferences.getChainProxySettings(profileId);
       if (chainSettings.enabled) {
         final chainedYaml = applyChainProxyYaml(
@@ -148,30 +139,19 @@ patch(
   Future<String> getProfileWithId""",
 )
 
-# Add platform-specific chain configuration entries to the existing proxies
-# page. Android keeps the NekoBox-style landing proxy. Windows uses the ordered
-# Clash Verge-style runtime chain UI.
+# Windows and Android now open the same residential SOCKS5 landing-chain UI.
+# There is no Windows-only target-group/node-order configuration in the active
+# path; node selection continues to happen in FlClash's ordinary proxy groups.
 patch(
     'lib/views/proxies/proxies.dart',
     "import 'package:fl_clash/views/proxies/list.dart';\n",
-    "import 'package:fl_clash/views/proxies/chain_proxy.dart';\nimport 'package:fl_clash/views/proxies/list.dart';\nimport 'package:fl_clash/views/proxies/windows_proxy_chain.dart';\n",
+    "import 'package:fl_clash/views/proxies/chain_proxy.dart';\nimport 'package:fl_clash/views/proxies/list.dart';\n",
 )
 patch(
     'lib/views/proxies/proxies.dart',
     """            if (_hasProviders)
               CommonPopupMenuItem(""",
-    """            if (system.isWindows)
-              CommonPopupMenuItem(
-                icon: Icons.account_tree_outlined,
-                label: '链式代理',
-                onPressed: () {
-                  showExtend(
-                    context,
-                    builder: (_) => const WindowsProxyChainView(),
-                  );
-                },
-              )
-            else if (system.isAndroid)
+    """            if (system.isWindows || system.isAndroid)
               CommonPopupMenuItem(
                 icon: Icons.account_tree_outlined,
                 label: '链式代理',
@@ -186,7 +166,7 @@ patch(
               CommonPopupMenuItem(""",
 )
 
-# yaml is used at runtime by both final-profile overlays, not just tests.
+# yaml is used at runtime by the shared final-profile overlay, not just tests.
 pubspec = ROOT / 'pubspec.yaml'
 text = pubspec.read_text(encoding='utf-8')
 if '\n  yaml: ^3.1.3\n' not in text.split('dev_dependencies:')[0]:
