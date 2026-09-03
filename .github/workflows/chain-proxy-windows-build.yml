@@ -48,19 +48,19 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 
-      - name: Windows chain tests
+      - name: Windows landing-chain parity tests
         run: flutter test test/common/windows_proxy_chain_test.dart --reporter expanded
 
-      - name: Android landing-chain regression tests
+      - name: Shared landing-chain regression tests
         run: flutter test test/common/chain_proxy_test.dart --reporter expanded
 
-      - name: Verify Windows chain cannot touch profile files
+      - name: Verify shared chain cannot touch profile files
         shell: pwsh
         run: |
           $files = @(
-            'lib/common/windows_proxy_chain.dart',
-            'lib/models/windows_proxy_chain.dart',
-            'lib/views/proxies/windows_proxy_chain.dart'
+            'lib/common/chain_proxy.dart',
+            'lib/models/chain_proxy.dart',
+            'lib/views/proxies/chain_proxy.dart'
           )
           $forbidden = @(
             "import 'dart:io'",
