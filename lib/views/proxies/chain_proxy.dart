@@ -82,10 +82,10 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
           .read(setupActionProvider.notifier)
           .applyProfile(force: true);
       if (!applied) {
-        dialogs.showNotifier('链式代理应用失败，请确认当前订阅使用规则模式且包含代理规则');
+        dialogs.showNotifier('链式代理应用失败，请检查当前配置和住宅 SOCKS5 参数');
         return;
       }
-      dialogs.showNotifier(_enabled ? '链式代理已按订阅规则启用' : '链式代理已关闭');
+      dialogs.showNotifier(_enabled ? '住宅落地代理已应用到当前订阅' : '链式代理已关闭');
       if (mounted) context.safeNestedPop();
     } catch (e) {
       dialogs.showNotifier('链式代理应用失败：$e');
@@ -123,8 +123,8 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
           children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('启用链式代理'),
-              subtitle: const Text('原规则代理目标 → 住宅 SOCKS5 → Internet'),
+              title: const Text('启用住宅落地代理'),
+              subtitle: const Text('机场当前节点 → 住宅 SOCKS5 → Internet'),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
@@ -181,13 +181,13 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('SOCKS5 UDP'),
-              subtitle: const Text('允许原规则中匹配代理的 UDP 流量通过住宅 SOCKS5'),
+              subtitle: const Text('允许代理流量通过住宅 SOCKS5 使用 UDP'),
               value: _udp,
               onChanged: _enabled ? (value) => setState(() => _udp = value) : null,
             ),
             const SizedBox(height: 16),
             const Text(
-              '链式代理现在完全跟随订阅规则，不需要选择机场代理组。原规则为 DIRECT 或 REJECT 的流量保持不变；原规则只要指向真实代理节点或代理组，就自动改为“原代理目标 → 住宅 SOCKS5”。因此规则指向“节点选择”“香港节点”“自动选择”等不同代理组时都会分别保持原有选择逻辑，切换节点无需重新设置。订阅刷新后住宅 SOCKS5 设置仍然保留。',
+              '实现方式参考 NekoBox 的落地代理模型。普通订阅不会改动原来的规则、地区组或总选择组；每个机场节点仍保留原名称和原选择位置，但实际连接会自动变成“机场节点 → 住宅 SOCKS5”。因此香港、日本、自动选择等多层代理组都可正常切换，DIRECT 和 REJECT 不受影响，也不需要单独指定某个机场组。动态 proxy-provider 配置会自动使用兼容模式。订阅刷新后住宅 SOCKS5 设置仍然保留。',
               style: TextStyle(fontSize: 13),
             ),
           ],
