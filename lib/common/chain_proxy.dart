@@ -38,14 +38,28 @@ const _nonProxyTypes = <String>{
   'dns',
 };
 
+// Normal application DNS. These resolver transports follow routing rules, so
+// once the airport -> residential SOCKS5 chain is up, ordinary DNS leaves via
+// that chain instead of the Android network.
 const _privacyDnsServers = <String>[
   'https://1.1.1.1/dns-query',
   'https://8.8.8.8/dns-query',
 ];
 
-const _privacyBootstrapDnsServers = <String>[
-  'tls://1.1.1.1',
-  'tls://8.8.8.8',
+// Proxy-node bootstrap DNS must be reachable before the chain itself exists.
+// Use mainland-reachable encrypted resolvers and force their transport DIRECT;
+// they are only used to resolve airport/residential proxy server hostnames.
+const _proxyBootstrapDnsServers = <String>[
+  'https://doh.pub/dns-query#DIRECT',
+  'https://dns.alidns.com/dns-query#DIRECT',
+];
+
+// Mihomo requires IP resolvers for resolving DNS-server hostnames. These only
+// bootstrap doh.pub/dns.alidns.com; ordinary application domains never use
+// these resolvers directly.
+const _bootstrapResolverIps = <String>[
+  '223.5.5.5',
+  '119.29.29.29',
 ];
 
 bool _isChainableProxy(Map<String, dynamic> proxy) {
@@ -97,18 +111,16 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   dns['prefer-h3'] = false;
   dns['use-system-hosts'] = false;
 
-  // Do not route bootstrap DNS through RULES here. On Android, combining
-  // respect-rules/#RULES with a landing SOCKS5 that itself uses dialer-proxy
-  // can create a startup dependency cycle before proxy node hostnames are
-  // resolved. Queries remain encrypted and never use Android's system DNS,
-  // but the resolver transport is deliberately independent from the chain.
-  dns['respect-rules'] = false;
+  // Ordinary DNS follows the active routing rules. Proxy-server DNS is kept on
+  // a separate DIRECT encrypted bootstrap path so node hostnames can be
+  // resolved before the chain exists. This is the split Mihomo expects to
+  // avoid the proxy/DNS chicken-and-egg failure on Android.
+  dns['respect-rules'] = true;
   dns['nameserver'] = List<String>.from(_privacyDnsServers);
-  dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
-
-  // Mihomo permits encrypted default resolvers when the endpoint is an IP.
-  // DoT is used here as a minimal bootstrap transport with no hostname lookup.
-  dns['default-nameserver'] = List<String>.from(_privacyBootstrapDnsServers);
+  dns['proxy-server-nameserver'] = List<String>.from(
+    _proxyBootstrapDnsServers,
+  );
+  dns['default-nameserver'] = List<String>.from(_bootstrapResolverIps);
   raw['dns'] = dns;
 }
 
