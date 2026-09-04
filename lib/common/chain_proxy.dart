@@ -38,6 +38,11 @@ const _nonProxyTypes = <String>{
   'dns',
 };
 
+const _privacyDnsServers = <String>[
+  'https://1.1.1.1/dns-query',
+  'https://8.8.8.8/dns-query',
+];
+
 bool _isChainableProxy(Map<String, dynamic> proxy) {
   final name = proxy['name']?.toString().trim() ?? '';
   final type = proxy['type']?.toString().trim().toLowerCase() ?? '';
@@ -62,6 +67,34 @@ Map<String, dynamic> _landingProxy(
       'username': settings.username.trim(),
     if (settings.password.isNotEmpty) 'password': settings.password,
   };
+}
+
+String _dnsThroughRules(String server) {
+  if (server.contains('#')) return server;
+  return '$server#RULES';
+}
+
+void _applyDnsLeakProtection(Map<String, dynamic> raw) {
+  final current = raw['dns'];
+  final dns = current is Map
+      ? Map<String, dynamic>.from(current)
+      : <String, dynamic>{};
+
+  // Mihomo's respect-rules sends DNS connections through normal routing rules.
+  // proxy-server-nameserver remains outside that dependency loop so proxy node
+  // hostnames can still be resolved without falling back to Android system DNS.
+  dns['enable'] = true;
+  dns['respect-rules'] = true;
+  dns['prefer-h3'] = false;
+  dns['use-system-hosts'] = false;
+  dns['nameserver'] = _privacyDnsServers.map(_dnsThroughRules).toList();
+  dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
+
+  // Keep bootstrap resolution independent from the Android resolver. These are
+  // literal IP resolvers, so encrypted DoH endpoints above do not need system
+  // DNS just to resolve their own hostnames.
+  dns['default-nameserver'] = const ['1.1.1.1', '8.8.8.8'];
+  raw['dns'] = dns;
 }
 
 bool _hasDynamicProxySources(Map<String, dynamic> raw, List<dynamic> groups) {
@@ -193,6 +226,10 @@ String applyChainProxyYaml(
   final raw = Map<String, dynamic>.from(normalized);
   final proxies = List<dynamic>.from(raw['proxies'] as List? ?? const []);
   final groups = List<dynamic>.from(raw['proxy-groups'] as List? ?? const []);
+
+  if (settings.dnsLeakProtection) {
+    _applyDnsLeakProtection(raw);
+  }
 
   // Provider/use/include-all groups load nodes dynamically. Mihomo proxy groups
   // cannot themselves carry dialer-proxy, so those profiles use a compatible
