@@ -80,6 +80,19 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
       ? Map<String, dynamic>.from(current)
       : <String, dynamic>{};
 
+  // Strict mode owns the resolver graph. Remove inherited resolver branches
+  // that could bypass the protected DoH path through fallback/policy/direct DNS.
+  for (final key in const <String>[
+    'nameserver-policy',
+    'proxy-server-nameserver-policy',
+    'direct-nameserver',
+    'direct-nameserver-follow-policy',
+    'fallback',
+    'fallback-filter',
+  ]) {
+    dns.remove(key);
+  }
+
   // Mihomo's respect-rules sends DNS connections through normal routing rules.
   // proxy-server-nameserver remains outside that dependency loop so proxy node
   // hostnames can still be resolved without falling back to Android system DNS.
@@ -90,10 +103,10 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   dns['nameserver'] = _privacyDnsServers.map(_dnsThroughRules).toList();
   dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
 
-  // Keep bootstrap resolution independent from the Android resolver. These are
-  // literal IP resolvers, so encrypted DoH endpoints above do not need system
-  // DNS just to resolve their own hostnames.
-  dns['default-nameserver'] = const ['1.1.1.1', '8.8.8.8'];
+  // Mihomo allows encrypted default resolvers when the endpoint host is already
+  // an IP address. Using IP-hosted DoH removes the remaining plaintext bootstrap
+  // query while also avoiding a DNS-name bootstrap dependency loop.
+  dns['default-nameserver'] = List<String>.from(_privacyDnsServers);
   raw['dns'] = dns;
 }
 
