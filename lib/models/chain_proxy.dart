@@ -5,6 +5,7 @@ class ChainProxySettings {
   final String username;
   final String password;
   final bool udp;
+  final bool dnsLeakProtection;
 
   const ChainProxySettings({
     this.enabled = false,
@@ -13,6 +14,7 @@ class ChainProxySettings {
     this.username = '',
     this.password = '',
     this.udp = true,
+    this.dnsLeakProtection = true,
   });
 
   bool get isComplete =>
@@ -25,6 +27,7 @@ class ChainProxySettings {
     String? username,
     String? password,
     bool? udp,
+    bool? dnsLeakProtection,
   }) {
     return ChainProxySettings(
       enabled: enabled ?? this.enabled,
@@ -33,6 +36,7 @@ class ChainProxySettings {
       username: username ?? this.username,
       password: password ?? this.password,
       udp: udp ?? this.udp,
+      dnsLeakProtection: dnsLeakProtection ?? this.dnsLeakProtection,
     );
   }
 
@@ -43,6 +47,7 @@ class ChainProxySettings {
     'username': username,
     'password': password,
     'udp': udp,
+    'dnsLeakProtection': dnsLeakProtection,
   };
 
   factory ChainProxySettings.fromJson(Map<String, Object?> json) {
@@ -53,6 +58,8 @@ class ChainProxySettings {
       username: json['username'] as String? ?? '',
       password: json['password'] as String? ?? '',
       udp: json['udp'] != false,
+      // Keep protection enabled for settings saved by older builds.
+      dnsLeakProtection: json['dnsLeakProtection'] != false,
     );
   }
 }
