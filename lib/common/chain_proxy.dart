@@ -38,25 +38,20 @@ const _nonProxyTypes = <String>{
   'dns',
 };
 
-// Normal application DNS. These resolver transports follow routing rules, so
-// once the airport -> residential SOCKS5 chain is up, ordinary DNS leaves via
-// that chain instead of the Android network.
+// Keep the protected resolver set compatible with FlClash's own Android
+// defaults. These DoH endpoints are reachable before the airport/residential
+// chain exists, which avoids making proxy-node resolution depend on the chain
+// that is still being established.
 const _privacyDnsServers = <String>[
-  'https://1.1.1.1/dns-query',
-  'https://8.8.8.8/dns-query',
+  'https://doh.pub/dns-query',
+  'https://dns.alidns.com/dns-query',
 ];
 
-// Proxy-node bootstrap DNS must be reachable before the chain itself exists.
-// Use mainland-reachable encrypted resolvers and force their transport DIRECT;
-// they are only used to resolve airport/residential proxy server hostnames.
-const _proxyBootstrapDnsServers = <String>[
-  'https://doh.pub/dns-query#DIRECT',
-  'https://dns.alidns.com/dns-query#DIRECT',
-];
-
-// Mihomo requires IP resolvers for resolving DNS-server hostnames. These only
-// bootstrap doh.pub/dns.alidns.com; ordinary application domains never use
-// these resolvers directly.
+// Mihomo uses default-nameserver only to bootstrap DNS-server hostnames. The
+// actual application and proxy-node domain questions still go to the encrypted
+// DoH resolvers above. Keeping this tiny bootstrap path is intentional: using
+// remote encrypted resolvers here previously made Android lose all node DNS
+// when those endpoints were unreachable before the tunnel was ready.
 const _bootstrapResolverIps = <String>[
   '223.5.5.5',
   '119.29.29.29',
@@ -94,8 +89,11 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
       ? Map<String, dynamic>.from(current)
       : <String, dynamic>{};
 
-  // Strict mode owns the resolver graph. Remove inherited resolver branches
-  // that could fall back to a subscription-provided or Android system resolver.
+  // Preserve FlClash/Mihomo structural DNS fields such as listen,
+  // enhanced-mode, fake-ip-range and fake-ip-filter. They are part of the
+  // Android TUN DNS path and replacing them wholesale can break DNS hijacking.
+  // Only remove resolver branches that could send real domain questions to an
+  // inherited subscription resolver outside our protected resolver set.
   for (final key in const <String>[
     'nameserver-policy',
     'proxy-server-nameserver-policy',
@@ -108,19 +106,30 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   }
 
   dns['enable'] = true;
+  dns['listen'] ??= '0.0.0.0:1053';
   dns['prefer-h3'] = false;
   dns['use-system-hosts'] = false;
 
-  // Ordinary DNS follows the active routing rules. Proxy-server DNS is kept on
-  // a separate DIRECT encrypted bootstrap path so node hostnames can be
-  // resolved before the chain exists. This is the split Mihomo expects to
-  // avoid the proxy/DNS chicken-and-egg failure on Android.
-  dns['respect-rules'] = true;
+  // Do not make DNS transport follow proxy rules here. Android already sends
+  // system DNS to the VPN's synthetic resolver and the TUN layer hijacks port
+  // 53. Keeping upstream DoH independent from proxy rules prevents the
+  // node-DNS -> proxy -> node-DNS bootstrap cycle that caused every delay test
+  // to time out on real devices.
+  dns['respect-rules'] = false;
   dns['nameserver'] = List<String>.from(_privacyDnsServers);
-  dns['proxy-server-nameserver'] = List<String>.from(
-    _proxyBootstrapDnsServers,
-  );
+  dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
   dns['default-nameserver'] = List<String>.from(_bootstrapResolverIps);
+
+  // A plain subscription often has no DNS section at all. In that case use the
+  // same structural defaults as FlClash instead of relying on Mihomo implicit
+  // defaults, so Android TUN DNS handling stays deterministic.
+  dns.putIfAbsent('enhanced-mode', () => 'fake-ip');
+  dns.putIfAbsent('fake-ip-range', () => '198.18.0.1/16');
+  dns.putIfAbsent(
+    'fake-ip-filter',
+    () => <String>['*.lan', 'localhost.ptlogin2.qq.com'],
+  );
+
   raw['dns'] = dns;
 }
 
