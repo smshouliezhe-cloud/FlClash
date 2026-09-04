@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "cloud.smshouliezhe.privacychain"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "cloud.smshouliezhe.privacychain"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-dev"
     }
@@ -36,7 +36,7 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.02.01")
     implementation(composeBom)
 
     implementation("androidx.activity:activity-compose:1.13.0")
