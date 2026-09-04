@@ -1,5 +1,6 @@
 export 'app_localizations.dart';
 export 'app_ports.dart';
+export 'chain_proxy.dart';
 export 'changelog.dart';
 export 'color.dart';
 export 'compute.dart';
