@@ -43,6 +43,11 @@ const _privacyDnsServers = <String>[
   'https://8.8.8.8/dns-query',
 ];
 
+const _privacyBootstrapDnsServers = <String>[
+  'tls://1.1.1.1',
+  'tls://8.8.8.8',
+];
+
 bool _isChainableProxy(Map<String, dynamic> proxy) {
   final name = proxy['name']?.toString().trim() ?? '';
   final type = proxy['type']?.toString().trim().toLowerCase() ?? '';
@@ -69,11 +74,6 @@ Map<String, dynamic> _landingProxy(
   };
 }
 
-String _dnsThroughRules(String server) {
-  if (server.contains('#')) return server;
-  return '$server#RULES';
-}
-
 void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   final current = raw['dns'];
   final dns = current is Map
@@ -81,7 +81,7 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
       : <String, dynamic>{};
 
   // Strict mode owns the resolver graph. Remove inherited resolver branches
-  // that could bypass the protected DoH path through fallback/policy/direct DNS.
+  // that could fall back to a subscription-provided or Android system resolver.
   for (final key in const <String>[
     'nameserver-policy',
     'proxy-server-nameserver-policy',
@@ -93,20 +93,22 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
     dns.remove(key);
   }
 
-  // Mihomo's respect-rules sends DNS connections through normal routing rules.
-  // proxy-server-nameserver remains outside that dependency loop so proxy node
-  // hostnames can still be resolved without falling back to Android system DNS.
   dns['enable'] = true;
-  dns['respect-rules'] = true;
   dns['prefer-h3'] = false;
   dns['use-system-hosts'] = false;
-  dns['nameserver'] = _privacyDnsServers.map(_dnsThroughRules).toList();
+
+  // Do not route bootstrap DNS through RULES here. On Android, combining
+  // respect-rules/#RULES with a landing SOCKS5 that itself uses dialer-proxy
+  // can create a startup dependency cycle before proxy node hostnames are
+  // resolved. Queries remain encrypted and never use Android's system DNS,
+  // but the resolver transport is deliberately independent from the chain.
+  dns['respect-rules'] = false;
+  dns['nameserver'] = List<String>.from(_privacyDnsServers);
   dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
 
-  // Mihomo allows encrypted default resolvers when the endpoint host is already
-  // an IP address. Using IP-hosted DoH removes the remaining plaintext bootstrap
-  // query while also avoiding a DNS-name bootstrap dependency loop.
-  dns['default-nameserver'] = List<String>.from(_privacyDnsServers);
+  // Mihomo permits encrypted default resolvers when the endpoint is an IP.
+  // DoT is used here as a minimal bootstrap transport with no hostname lookup.
+  dns['default-nameserver'] = List<String>.from(_privacyBootstrapDnsServers);
   raw['dns'] = dns;
 }
 
@@ -244,10 +246,6 @@ String applyChainProxyYaml(
     _applyDnsLeakProtection(raw);
   }
 
-  // Provider/use/include-all groups load nodes dynamically. Mihomo proxy groups
-  // cannot themselves carry dialer-proxy, so those profiles use a compatible
-  // rule-target wrapper. Ordinary subscriptions use the NekoBox-style model
-  // below and leave every original rule and proxy-group untouched.
   if (_hasDynamicProxySources(raw, groups)) {
     _applyDynamicSourceCompatibility(
       raw,
@@ -291,18 +289,7 @@ String applyChainProxyYaml(
       throw StateError('链式代理内部节点名称冲突：$upstreamName');
     }
 
-    // Same model as NekoBox landingProxy/detour:
-    //   selector/rule -> landing SOCKS5 -> original airport node -> network
-    // In Mihomo a proxy's dialer-proxy is the transport used to reach that
-    // proxy's server. Therefore the residential SOCKS5 keeps the original
-    // visible node name while its connection is dialed through the hidden
-    // original airport node. The public egress is the residential SOCKS5.
     final upstream = Map<String, dynamic>.from(proxy)..['name'] = upstreamName;
-
-    // Keep the visible landing wrapper before the hidden raw upstream. Mihomo
-    // resolves dialer-proxy by name after loading the full config, so forward
-    // references are valid. This also makes accidental GLOBAL-mode defaults
-    // prefer the chained node instead of the raw airport node.
     transformed.add(_landingProxy(publicName, upstreamName, settings));
     transformed.add(upstream);
   }
@@ -311,10 +298,6 @@ String applyChainProxyYaml(
     throw StateError('当前配置没有可链式代理的节点');
   }
 
-  // Rules and proxy-groups deliberately remain byte-for-byte equivalent in
-  // routing meaning: they still reference the original node names. Those names
-  // now identify landing wrappers, exactly like NekoBox builds every selector
-  // member as a chain before putting it into the selector.
   raw['proxies'] = transformed;
   return yaml.encode(raw);
 }
