@@ -351,7 +351,7 @@ class SetupAction extends _$SetupAction {
       rawConfig = await handleEvaluate(scriptContent!, rawConfig);
     }
     final directory = await appPath.profilesPath;
-    final res = makeRealProfileTask(
+    final res = await makeRealProfileTask(
       MakeRealProfileState(
         rules: rules,
         proxyGroups: proxyGroups,
@@ -366,7 +366,9 @@ class SetupAction extends _$SetupAction {
         matchTarget: setupState.matchTarget,
       ),
     );
-    return res;
+    final chainSettings = await preferences.getChainProxySettings(profileId);
+    final yaml = applyChainProxyYaml(res.yaml, chainSettings, profileId);
+    return (yaml: yaml, md5: yaml.toMd5());
   }
 
   Future<String> getProfileWithId(int profileId) async {
