@@ -81,6 +81,20 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     setState(() => _saving = true);
     try {
       await preferences.saveChainProxySettings(profileId, settings);
+
+      // Android's VpnService already points device DNS at a synthetic TUN DNS
+      // address. When chain DNS protection is enabled, also turn on FlClash's
+      // native all-port-53 hijacking so apps with a hard-coded plaintext DNS
+      // server cannot bypass the protected Mihomo resolver path.
+      if (system.isAndroid && settings.enabled && settings.dnsLeakProtection) {
+        final vpnSetting = ref.read(vpnSettingProvider);
+        if (!vpnSetting.dnsHijacking) {
+          ref
+              .read(vpnSettingProvider.notifier)
+              .update((state) => state.copyWith(dnsHijacking: true));
+        }
+      }
+
       final applied = await ref
           .read(setupActionProvider.notifier)
           .applyProfile(force: true);
@@ -204,7 +218,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
               contentPadding: EdgeInsets.zero,
               title: const Text('DNS 防泄漏'),
               subtitle: const Text(
-                '由 Mihomo 接管 DNS，使用加密 DNS 并让普通解析跟随代理规则，避免回落到 Android 系统 DNS',
+                'Android 使用 TUN 劫持 53 端口，Mihomo 使用腾讯/阿里 DoH 解析；保留 FlClash 原生 DNS 结构，避免节点解析死循环',
               ),
               value: _dnsLeakProtection,
               onChanged: _enabled
