@@ -152,38 +152,38 @@ class Preferences {
   }
 
   Future<ChainProxySettings> getChainProxySettings(int profileId) async {
-    final sharedPreferencesIns = await sharedPreferencesCompleter.future;
-    final raw = sharedPreferencesIns?.getString('chainProxy.$profileId');
-    if (raw == null || raw.isEmpty) {
-      return const ChainProxySettings();
-    }
     try {
-      final decoded = json.decode(raw);
-      if (decoded is Map) {
-        return ChainProxySettings.fromJson(
-          decoded.map<String, Object?>(
-            (key, value) => MapEntry(key.toString(), value),
-          ),
-        );
+      final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+      final raw = sharedPreferencesIns?.getString('chain_proxy_$profileId');
+      if (raw == null || raw.isEmpty) {
+        return const ChainProxySettings();
       }
+      final decoded = json.decode(raw);
+      if (decoded is! Map) {
+        return const ChainProxySettings();
+      }
+      return ChainProxySettings.fromJson(
+        Map<String, Object?>.from(decoded),
+      );
     } catch (e) {
       commonPrint.log(
         'getChainProxySettings error ${e.toString()}',
         logLevel: LogLevel.warning,
       );
+      return const ChainProxySettings();
     }
-    return const ChainProxySettings();
   }
 
-  Future<void> saveChainProxySettings(
+  Future<bool> saveChainProxySettings(
     int profileId,
     ChainProxySettings settings,
   ) async {
     final sharedPreferencesIns = await sharedPreferencesCompleter.future;
-    await sharedPreferencesIns?.setString(
-      'chainProxy.$profileId',
-      json.encode(settings.toJson()),
-    );
+    return await sharedPreferencesIns?.setString(
+          'chain_proxy_$profileId',
+          json.encode(settings.toJson()),
+        ) ??
+        false;
   }
 
   Future<void> clearPreferences() async {
