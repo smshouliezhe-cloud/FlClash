@@ -186,6 +186,45 @@ class Preferences {
         false;
   }
 
+  Future<WindowsProxyChainSettings> getWindowsProxyChainSettings(
+    int profileId,
+  ) async {
+    try {
+      final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+      final raw = sharedPreferencesIns?.getString(
+        'windows_proxy_chain_$profileId',
+      );
+      if (raw == null || raw.isEmpty) {
+        return const WindowsProxyChainSettings();
+      }
+      final decoded = json.decode(raw);
+      if (decoded is! Map) {
+        return const WindowsProxyChainSettings();
+      }
+      return WindowsProxyChainSettings.fromJson(
+        Map<String, Object?>.from(decoded),
+      );
+    } catch (e) {
+      commonPrint.log(
+        'getWindowsProxyChainSettings error ${e.toString()}',
+        logLevel: LogLevel.warning,
+      );
+      return const WindowsProxyChainSettings();
+    }
+  }
+
+  Future<bool> saveWindowsProxyChainSettings(
+    int profileId,
+    WindowsProxyChainSettings settings,
+  ) async {
+    final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+    return await sharedPreferencesIns?.setString(
+          'windows_proxy_chain_$profileId',
+          json.encode(settings.toJson()),
+        ) ??
+        false;
+  }
+
   Future<void> clearPreferences() async {
     final sharedPreferencesIns = await sharedPreferencesCompleter.future;
     await sharedPreferencesIns?.clear();
