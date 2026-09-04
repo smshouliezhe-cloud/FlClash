@@ -63,6 +63,65 @@ rules:
     );
   });
 
+  test('DNS leak protection uses encrypted resolvers and routing rules', () {
+    const settings = ChainProxySettings(
+      enabled: true,
+      server: '10.0.0.8',
+      port: 1080,
+    );
+    final parsed = loadYaml(applyChainProxyYaml(source, settings, 42));
+    final dns = parsed['dns'] as YamlMap;
+
+    expect(dns['enable'], true);
+    expect(dns['respect-rules'], true);
+    expect(dns['prefer-h3'], false);
+    expect(dns['use-system-hosts'], false);
+    expect(
+      (dns['nameserver'] as YamlList).map((item) => item.toString()).toList(),
+      [
+        'https://1.1.1.1/dns-query#RULES',
+        'https://8.8.8.8/dns-query#RULES',
+      ],
+    );
+    expect(
+      (dns['proxy-server-nameserver'] as YamlList)
+          .map((item) => item.toString())
+          .toList(),
+      ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+    );
+  });
+
+  test('DNS leak protection can be disabled without rewriting DNS', () {
+    const sourceWithDns = '''
+mode: rule
+dns:
+  enable: true
+  nameserver:
+    - 192.0.2.53
+proxies:
+  - name: Airport-A
+    type: ss
+    server: 127.0.0.1
+    port: 10001
+    cipher: aes-128-gcm
+    password: test
+rules:
+  - MATCH,Airport-A
+''';
+    const settings = ChainProxySettings(
+      enabled: true,
+      server: '10.0.0.8',
+      port: 1080,
+      dnsLeakProtection: false,
+    );
+    final parsed = loadYaml(applyChainProxyYaml(sourceWithDns, settings, 43));
+    final dns = parsed['dns'] as YamlMap;
+
+    expect(dns['enable'], true);
+    expect(dns['nameserver'], ['192.0.2.53']);
+    expect(dns.containsKey('respect-rules'), false);
+  });
+
   test('each visible airport node becomes a residential landing chain', () {
     const settings = ChainProxySettings(
       enabled: true,
@@ -264,6 +323,7 @@ proxy-groups:
     expect(settings.server, '10.0.0.8');
     expect(settings.port, 1080);
     expect(settings.udp, false);
+    expect(settings.dnsLeakProtection, true);
     expect(settings.isComplete, true);
   });
 }
