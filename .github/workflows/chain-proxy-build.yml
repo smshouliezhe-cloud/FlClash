@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/chain-proxy-residential
+      - feature/android-dns-privacy-hardening
   workflow_dispatch:
 
 permissions:
