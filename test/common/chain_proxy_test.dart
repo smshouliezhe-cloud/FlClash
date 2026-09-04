@@ -35,7 +35,7 @@ rules:
     expect(applyChainProxyYaml(source, settings, 1), source);
   });
 
-  test('DNS protection splits proxy bootstrap from protected queries', () {
+  test('DNS protection uses FlClash-compatible encrypted resolvers', () {
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
@@ -45,21 +45,21 @@ rules:
     final dns = parsed['dns'] as YamlMap;
 
     expect(dns['enable'], true);
-    expect(dns['respect-rules'], true);
+    expect(dns['listen'], '0.0.0.0:1053');
+    expect(dns['respect-rules'], false);
     expect(dns['prefer-h3'], false);
     expect(dns['use-system-hosts'], false);
+    expect(dns['enhanced-mode'], 'fake-ip');
+    expect(dns['fake-ip-range'], '198.18.0.1/16');
     expect(
       (dns['nameserver'] as YamlList).map((item) => item.toString()).toList(),
-      ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+      ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
     );
     expect(
       (dns['proxy-server-nameserver'] as YamlList)
           .map((item) => item.toString())
           .toList(),
-      [
-        'https://doh.pub/dns-query#DIRECT',
-        'https://dns.alidns.com/dns-query#DIRECT',
-      ],
+      ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
     );
     expect(
       (dns['default-nameserver'] as YamlList)
@@ -69,11 +69,17 @@ rules:
     );
   });
 
-  test('DNS protection removes inherited resolver bypasses', () {
+  test('DNS protection preserves TUN DNS structural fields', () {
     const sourceWithDns = '''
 mode: rule
 dns:
   enable: true
+  listen: 127.0.0.1:2053
+  enhanced-mode: redir-host
+  fake-ip-range: 198.19.0.1/16
+  fake-ip-filter:
+    - '*.home'
+  ipv6: true
   nameserver:
     - 192.0.2.53
   fallback:
@@ -100,21 +106,17 @@ rules:
     final parsed = loadYaml(applyChainProxyYaml(sourceWithDns, settings, 43));
     final dns = parsed['dns'] as YamlMap;
 
+    expect(dns['listen'], '127.0.0.1:2053');
+    expect(dns['enhanced-mode'], 'redir-host');
+    expect(dns['fake-ip-range'], '198.19.0.1/16');
+    expect(dns['fake-ip-filter'], ['*.home']);
+    expect(dns['ipv6'], true);
     expect(dns.containsKey('fallback'), false);
     expect(dns.containsKey('direct-nameserver'), false);
     expect(dns.containsKey('nameserver-policy'), false);
     expect(
       (dns['nameserver'] as YamlList).map((item) => item.toString()).toList(),
-      ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
-    );
-    expect(
-      (dns['proxy-server-nameserver'] as YamlList)
-          .map((item) => item.toString())
-          .toList(),
-      [
-        'https://doh.pub/dns-query#DIRECT',
-        'https://dns.alidns.com/dns-query#DIRECT',
-      ],
+      ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
     );
     expect(dns.toString(), isNot(contains('192.0.2.53')));
     expect(dns.toString(), isNot(contains('114.114.114.114')));
