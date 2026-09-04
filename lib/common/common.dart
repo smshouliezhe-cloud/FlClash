@@ -49,4 +49,5 @@ export 'task.dart';
 export 'task_pool.dart';
 export 'text.dart';
 export 'webdav.dart';
+export 'windows_proxy_chain.dart';
 export 'yaml.dart';
