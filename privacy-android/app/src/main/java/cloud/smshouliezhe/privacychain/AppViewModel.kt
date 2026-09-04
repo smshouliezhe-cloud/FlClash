@@ -37,10 +37,6 @@ class AppViewModel : ViewModel() {
         selectedTab = tab
     }
 
-    fun setConnected(value: Boolean) {
-        isConnected = value
-    }
-
     fun updateAirportNode(name: String) {
         profile = profile.copy(airportNode = name)
     }
