@@ -20,9 +20,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Apply chain proxy patch
-        run: python3 tool/apply_chain_proxy_patch.py
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -52,7 +49,7 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Format patched sources
+      - name: Format sources
         run: dart format lib test
 
       - name: Analyze
