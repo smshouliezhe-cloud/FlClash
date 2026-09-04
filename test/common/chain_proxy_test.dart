@@ -35,7 +35,7 @@ rules:
     expect(applyChainProxyYaml(source, settings, 1), source);
   });
 
-  test('DNS protection is encrypted without RULES bootstrap recursion', () {
+  test('DNS protection splits proxy bootstrap from protected queries', () {
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
@@ -45,7 +45,7 @@ rules:
     final dns = parsed['dns'] as YamlMap;
 
     expect(dns['enable'], true);
-    expect(dns['respect-rules'], false);
+    expect(dns['respect-rules'], true);
     expect(dns['prefer-h3'], false);
     expect(dns['use-system-hosts'], false);
     expect(
@@ -56,15 +56,17 @@ rules:
       (dns['proxy-server-nameserver'] as YamlList)
           .map((item) => item.toString())
           .toList(),
-      ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+      [
+        'https://doh.pub/dns-query#DIRECT',
+        'https://dns.alidns.com/dns-query#DIRECT',
+      ],
     );
     expect(
       (dns['default-nameserver'] as YamlList)
           .map((item) => item.toString())
           .toList(),
-      ['tls://1.1.1.1', 'tls://8.8.8.8'],
+      ['223.5.5.5', '119.29.29.29'],
     );
-    expect(dns['nameserver'].toString(), isNot(contains('#RULES')));
   });
 
   test('DNS protection removes inherited resolver bypasses', () {
@@ -73,17 +75,17 @@ mode: rule
 dns:
   enable: true
   nameserver:
-    - 223.5.5.5
+    - 192.0.2.53
   fallback:
     - 114.114.114.114
   direct-nameserver:
     - system
   nameserver-policy:
-    '+.example.com': 223.5.5.5
+    '+.example.com': 192.0.2.53
 proxies:
   - name: Airport-A
     type: ss
-    server: 127.0.0.1
+    server: airport.example
     port: 10001
     cipher: aes-128-gcm
     password: test
@@ -92,7 +94,7 @@ rules:
 ''';
     const settings = ChainProxySettings(
       enabled: true,
-      server: '10.0.0.8',
+      server: 'residential.example',
       port: 1080,
     );
     final parsed = loadYaml(applyChainProxyYaml(sourceWithDns, settings, 43));
@@ -101,7 +103,20 @@ rules:
     expect(dns.containsKey('fallback'), false);
     expect(dns.containsKey('direct-nameserver'), false);
     expect(dns.containsKey('nameserver-policy'), false);
-    expect(dns.toString(), isNot(contains('223.5.5.5')));
+    expect(
+      (dns['nameserver'] as YamlList).map((item) => item.toString()).toList(),
+      ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+    );
+    expect(
+      (dns['proxy-server-nameserver'] as YamlList)
+          .map((item) => item.toString())
+          .toList(),
+      [
+        'https://doh.pub/dns-query#DIRECT',
+        'https://dns.alidns.com/dns-query#DIRECT',
+      ],
+    );
+    expect(dns.toString(), isNot(contains('192.0.2.53')));
     expect(dns.toString(), isNot(contains('114.114.114.114')));
   });
 
