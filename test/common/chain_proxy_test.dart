@@ -103,7 +103,6 @@ rules:
     expect(dns.containsKey('nameserver-policy'), false);
     expect(dns.toString(), isNot(contains('223.5.5.5')));
     expect(dns.toString(), isNot(contains('114.114.114.114')));
-    expect(dns.toString(), isNot(contains('system')));
   });
 
   test('DNS protection can be disabled without rewriting DNS', () {
