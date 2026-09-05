@@ -30,6 +30,9 @@ String chainProxyUpstreamName(int profileId, int index) =>
 String chainProxyFallbackName(int profileId, int index) =>
     '__FLCLASH_CHAIN_EXIT_${profileId}_$index';
 
+String chainProxyPrivacyGroupName(int profileId) =>
+    '__FLCLASH_CHAIN_PRIVACY_$profileId';
+
 const _nonProxyTypes = <String>{
   'direct',
   'reject',
@@ -38,23 +41,21 @@ const _nonProxyTypes = <String>{
   'dns',
 };
 
-// Keep the protected resolver set compatible with FlClash's own Android
-// defaults. These DoH endpoints are reachable before the airport/residential
-// chain exists, which avoids making proxy-node resolution depend on the chain
-// that is still being established.
+// Application DNS uses encrypted public resolvers. In Android strict privacy
+// mode these endpoints are explicitly bound to the chain privacy group, so the
+// resolver sees the residential egress instead of the phone's physical IP.
 const _privacyDnsServers = <String>[
   'https://doh.pub/dns-query',
   'https://dns.alidns.com/dns-query',
 ];
 
-// Mihomo uses default-nameserver only to bootstrap DNS-server hostnames. The
-// actual application and proxy-node domain questions still go to the encrypted
-// DoH resolvers above. Keeping this tiny bootstrap path is intentional: using
-// remote encrypted resolvers here previously made Android lose all node DNS
-// when those endpoints were unreachable before the tunnel was ready.
-const _bootstrapResolverIps = <String>[
-  '223.5.5.5',
-  '119.29.29.29',
+// default-nameserver only bootstraps DNS-server hostnames. Use IP-hosted DoH so
+// even the bootstrap path does not emit plaintext UDP/53 queries. AliDNS
+// supports RFC 8484 on these IP endpoints and they are reachable in mainland
+// networks where remote bootstrap resolvers can be unreliable.
+const _bootstrapDnsServers = <String>[
+  'https://223.5.5.5/dns-query',
+  'https://223.6.6.6/dns-query',
 ];
 
 bool _isChainableProxy(Map<String, dynamic> proxy) {
@@ -89,11 +90,8 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
       ? Map<String, dynamic>.from(current)
       : <String, dynamic>{};
 
-  // Preserve FlClash/Mihomo structural DNS fields such as listen,
-  // enhanced-mode, fake-ip-range and fake-ip-filter. They are part of the
-  // Android TUN DNS path and replacing them wholesale can break DNS hijacking.
-  // Only remove resolver branches that could send real domain questions to an
-  // inherited subscription resolver outside our protected resolver set.
+  // Strict mode owns the resolver graph. Remove inherited resolver branches
+  // that can send real application-domain questions outside the protected path.
   for (final key in const <String>[
     'nameserver-policy',
     'proxy-server-nameserver-policy',
@@ -109,20 +107,13 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   dns['listen'] ??= '0.0.0.0:1053';
   dns['prefer-h3'] = false;
   dns['use-system-hosts'] = false;
-
-  // Do not make DNS transport follow proxy rules here. Android already sends
-  // system DNS to the VPN's synthetic resolver and the TUN layer hijacks port
-  // 53. Keeping upstream DoH independent from proxy rules prevents the
-  // node-DNS -> proxy -> node-DNS bootstrap cycle that caused every delay test
-  // to time out on real devices.
   dns['respect-rules'] = false;
   dns['nameserver'] = List<String>.from(_privacyDnsServers);
   dns['proxy-server-nameserver'] = List<String>.from(_privacyDnsServers);
-  dns['default-nameserver'] = List<String>.from(_bootstrapResolverIps);
+  dns['default-nameserver'] = List<String>.from(_bootstrapDnsServers);
 
-  // A plain subscription often has no DNS section at all. In that case use the
-  // same structural defaults as FlClash instead of relying on Mihomo implicit
-  // defaults, so Android TUN DNS handling stays deterministic.
+  // A plain subscription often has no DNS section. Keep the same structural
+  // defaults as FlClash so Android TUN DNS handling stays deterministic.
   dns.putIfAbsent('enhanced-mode', () => 'fake-ip');
   dns.putIfAbsent('fake-ip-range', () => '198.18.0.1/16');
   dns.putIfAbsent(
@@ -131,6 +122,99 @@ void _applyDnsLeakProtection(Map<String, dynamic> raw) {
   );
 
   raw['dns'] = dns;
+}
+
+void _applyAndroidTunnelPrivacy(Map<String, dynamic> raw) {
+  final current = raw['tun'];
+  final tun = current is Map
+      ? Map<String, dynamic>.from(current)
+      : <String, dynamic>{};
+
+  // Do not silently claim whole-device protection when the Android VPN/TUN is
+  // disabled. Failing profile construction is safer than serving the previous
+  // or a partially protected profile.
+  if (tun['enable'] != true) {
+    throw StateError('Android 防泄漏模式需要先开启 TUN 模式');
+  }
+
+  final hijack = <String>[
+    for (final item in (tun['dns-hijack'] as List? ?? const []))
+      item.toString(),
+  ];
+  for (final entry in const <String>['any:53', 'tcp://any:53']) {
+    if (!hijack.contains(entry)) hijack.add(entry);
+  }
+
+  tun['dns-hijack'] = hijack;
+  // Mihomo documents strict-route as the Android switch that prevents address
+  // leaks and makes DNS hijacking effective with TUN routing.
+  tun['strict-route'] = true;
+  raw['tun'] = tun;
+}
+
+void _bindDnsToPrivacyGroup(Map<String, dynamic> raw, String privacyGroup) {
+  final current = raw['dns'];
+  if (current is! Map) return;
+  final dns = Map<String, dynamic>.from(current);
+
+  // Mihomo DNS URL fragments can name a proxy/group. Binding the application
+  // resolvers directly avoids DIRECT rules for the DoH endpoints and avoids the
+  // RULES bootstrap cycle that previously made Android node tests time out.
+  dns['nameserver'] = _privacyDnsServers
+      .map((server) => '$server#$privacyGroup')
+      .toList();
+  raw['dns'] = dns;
+}
+
+void _applyAndroidPrivacyRouting(
+  Map<String, dynamic> raw,
+  ChainProxySettings settings,
+  int profileId,
+  List<String> landingTargets,
+) {
+  if (landingTargets.isEmpty) {
+    throw StateError('Android 防泄漏模式没有可用的住宅落地链路');
+  }
+
+  final privacyGroup = chainProxyPrivacyGroupName(profileId);
+  final groups = List<dynamic>.from(
+    raw['proxy-groups'] as List? ?? const <dynamic>[],
+  );
+  final hasConflict = groups.any(
+    (item) => item is Map && item['name']?.toString() == privacyGroup,
+  );
+  if (hasConflict) {
+    throw StateError('链式代理内部节点名称冲突：$privacyGroup');
+  }
+
+  groups.add(<String, dynamic>{
+    'name': privacyGroup,
+    'type': 'select',
+    'proxies': List<String>.from(landingTargets),
+    'hidden': true,
+  });
+  raw['proxy-groups'] = groups;
+
+  final rules = List<dynamic>.from(raw['rules'] as List? ?? const []);
+  // WebRTC/STUN is UDP. Put the fail-closed rule before subscription DIRECT
+  // rules so it cannot expose the physical mobile/Wi-Fi address. If SOCKS5 UDP
+  // is disabled, reject UDP instead of allowing Mihomo to continue matching a
+  // later DIRECT rule. When enabled, force every UDP flow through a residential
+  // landing chain; DNS/53 is intercepted by TUN before normal routing.
+  final udpRule = settings.udp
+      ? 'NETWORK,udp,$privacyGroup'
+      : 'NETWORK,udp,REJECT';
+
+  raw['mode'] = 'rule';
+  raw['rules'] = <dynamic>[
+    udpRule,
+    // Android Private DNS uses DoT/853 and cannot be hijacked as normal DNS by
+    // Mihomo. Reject it in strict mode so it cannot silently bypass our resolver.
+    'DST-PORT,853,REJECT',
+    ...rules,
+  ];
+
+  _bindDnsToPrivacyGroup(raw, privacyGroup);
 }
 
 bool _hasDynamicProxySources(Map<String, dynamic> raw, List<dynamic> groups) {
@@ -246,8 +330,9 @@ void _applyDynamicSourceCompatibility(
 String applyChainProxyYaml(
   String sourceYaml,
   ChainProxySettings settings,
-  int profileId,
-) {
+  int profileId, {
+  bool enforceAndroidPrivacy = false,
+}) {
   if (!settings.enabled) return sourceYaml;
   if (!settings.isComplete) {
     throw StateError('链式代理配置不完整');
@@ -265,6 +350,9 @@ String applyChainProxyYaml(
 
   if (settings.dnsLeakProtection) {
     _applyDnsLeakProtection(raw);
+    if (enforceAndroidPrivacy) {
+      _applyAndroidTunnelPrivacy(raw);
+    }
   }
 
   if (_hasDynamicProxySources(raw, groups)) {
@@ -275,6 +363,19 @@ String applyChainProxyYaml(
       settings,
       profileId,
     );
+    if (settings.dnsLeakProtection && enforceAndroidPrivacy) {
+      final landingTargets = (raw['proxies'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => item['name']?.toString() ?? '')
+          .where((name) => name.startsWith('__FLCLASH_CHAIN_EXIT_'))
+          .toList();
+      _applyAndroidPrivacyRouting(
+        raw,
+        settings,
+        profileId,
+        landingTargets,
+      );
+    }
     return yaml.encode(raw);
   }
 
@@ -291,6 +392,7 @@ String applyChainProxyYaml(
   }
 
   final transformed = <dynamic>[];
+  final landingTargets = <String>[];
   var chainIndex = 0;
   for (final item in proxies) {
     if (item is! Map) {
@@ -313,6 +415,7 @@ String applyChainProxyYaml(
     final upstream = Map<String, dynamic>.from(proxy)..['name'] = upstreamName;
     transformed.add(_landingProxy(publicName, upstreamName, settings));
     transformed.add(upstream);
+    landingTargets.add(publicName);
   }
 
   if (chainIndex == 0) {
@@ -320,5 +423,8 @@ String applyChainProxyYaml(
   }
 
   raw['proxies'] = transformed;
+  if (settings.dnsLeakProtection && enforceAndroidPrivacy) {
+    _applyAndroidPrivacyRouting(raw, settings, profileId, landingTargets);
+  }
   return yaml.encode(raw);
 }
