@@ -65,8 +65,8 @@ class VPNItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     return _vpnToggle(
-      title: (l) => 'VPN',
-      subtitle: (l) => l.vpnEnableDesc,
+      title: (l) => 'VPN / TUN 模式',
+      subtitle: (l) => 'Android 全流量接管；住宅链式代理开启时会强制保持开启',
       select: (state) => state.enable,
       update: (state, value) => state.copyWith(enable: value),
     );
@@ -326,7 +326,7 @@ class NetworkListView extends StatelessWidget {
       if (system.isAndroid) const VPNItem(),
       if (system.isAndroid)
         ...generateSection(
-          title: 'VPN',
+          title: 'VPN / TUN',
           items: [
             const VpnSystemProxyItem(),
             const BypassDomainItem(),
