@@ -57,7 +57,11 @@ jobs:
         run: flutter analyze --no-fatal-infos
 
       - name: Chain proxy tests
-        run: flutter test test/common/chain_proxy_test.dart --reporter expanded
+        run: >-
+          flutter test
+          test/common/chain_proxy_test.dart
+          test/common/chain_dns_strict_test.dart
+          --reporter expanded
 
       - name: Build Android ARM64
         run: dart setup.dart android --arch arm64 -v
