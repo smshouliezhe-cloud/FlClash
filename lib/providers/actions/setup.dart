@@ -213,14 +213,23 @@ class SetupAction extends _$SetupAction {
   Future<void> updateConfig() async {
     await globalState.safeRun(() async {
       final updateParams = ref.read(updateParamsProvider);
-      final shouldContinueSetup = await requestAdmin(updateParams.tun.enable);
+      final chainRequiresTun = await _chainRequiresAndroidTun(
+        ref.read(currentProfileIdProvider),
+      );
+      if (chainRequiresTun) {
+        _enforceAndroidChainVpn();
+      }
+      final requestedTunEnable = updateParams.tun.enable || chainRequiresTun;
+      final shouldContinueSetup = await requestAdmin(requestedTunEnable);
       if (!shouldContinueSetup) {
         await _restartCoreAfterAuthorization();
         return;
       }
       final message = await _core.updateConfig(
         updateParams.copyWith.tun(
-          enable: _getEffectiveTunEnable(updateParams.tun.enable),
+          enable: chainRequiresTun
+              ? true
+              : _getEffectiveTunEnable(requestedTunEnable),
         ),
       );
       ref.read(checkIpNumProvider.notifier).add();
@@ -331,6 +340,11 @@ class SetupAction extends _$SetupAction {
     final appendSystemDns = networkSetting.appendSystemDns;
     final routeMode = networkSetting.routeMode;
     final configMap = await _core.getConfig(profileId);
+    final chainSettings = await preferences.getChainProxySettings(profileId);
+    final chainRequiresTun =
+        system.isAndroid &&
+        chainSettings.enabled &&
+        chainSettings.dnsLeakProtection;
     String? scriptContent;
     final List<Rule> addedRules = [];
     final List<ProxyGroup> proxyGroups = [];
@@ -343,8 +357,9 @@ class SetupAction extends _$SetupAction {
       proxyGroups.addAll(setupState.proxyGroups);
       rules.addAll(setupState.rules);
     }
+    final resolvedTun = patchConfig.tun.getRealTun(routeMode);
     final realPatchConfig = patchConfig.copyWith(
-      tun: patchConfig.tun.getRealTun(routeMode),
+      tun: chainRequiresTun ? resolvedTun.copyWith(enable: true) : resolvedTun,
     );
     Map<String, dynamic> rawConfig = configMap;
     if (scriptContent?.isNotEmpty == true) {
@@ -366,7 +381,6 @@ class SetupAction extends _$SetupAction {
         matchTarget: setupState.matchTarget,
       ),
     );
-    final chainSettings = await preferences.getChainProxySettings(profileId);
     final yaml = applyChainProxyYaml(res.yaml, chainSettings, profileId);
     return (yaml: yaml, md5: yaml.toMd5());
   }
@@ -384,6 +398,18 @@ class SetupAction extends _$SetupAction {
       dialogs.showNotifier(e.toString(), level: MessageLevel.error);
     }
     return '';
+  }
+
+  Future<bool> _chainRequiresAndroidTun(int? profileId) async {
+    if (!system.isAndroid || profileId == null) return false;
+    final settings = await preferences.getChainProxySettings(profileId);
+    return settings.enabled && settings.dnsLeakProtection;
+  }
+
+  void _enforceAndroidChainVpn() {
+    ref.read(vpnSettingProvider.notifier).update(
+      (state) => state.copyWith(enable: true, dnsHijacking: true),
+    );
   }
 
   bool _getEffectiveTunEnable(bool enableTun) {
@@ -460,12 +486,19 @@ class SetupAction extends _$SetupAction {
       ref.read(profilesProvider.notifier).put(nextProfile);
     }
     commonPrint.log('setup ===> ${profile?.realLabel}');
+    final chainRequiresTun = await _chainRequiresAndroidTun(profile?.id);
+    if (chainRequiresTun) {
+      _enforceAndroidChainVpn();
+    }
     final patchConfig = ref.read(patchClashConfigProvider);
-    final shouldContinueSetup = await requestAdmin(patchConfig.tun.enable);
+    final requestedTunEnable = patchConfig.tun.enable || chainRequiresTun;
+    final shouldContinueSetup = await requestAdmin(requestedTunEnable);
     if (!shouldContinueSetup) {
       return _SetupTaskResult.handoffToCoreRestart;
     }
-    final effectiveTunEnable = _getEffectiveTunEnable(patchConfig.tun.enable);
+    final effectiveTunEnable = chainRequiresTun
+        ? true
+        : _getEffectiveTunEnable(requestedTunEnable);
     final realPatchConfig = patchConfig.copyWith.tun(
       enable: effectiveTunEnable,
     );
