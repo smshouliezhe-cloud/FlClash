@@ -35,7 +35,7 @@ rules:
     expect(applyChainProxyYaml(source, settings, 1), source);
   });
 
-  test('DNS protection uses FlClash-compatible encrypted resolvers', () {
+  test('DNS protection uses encrypted resolvers and encrypted bootstrap', () {
     const settings = ChainProxySettings(
       enabled: true,
       server: '10.0.0.8',
@@ -65,7 +65,10 @@ rules:
       (dns['default-nameserver'] as YamlList)
           .map((item) => item.toString())
           .toList(),
-      ['223.5.5.5', '119.29.29.29'],
+      [
+        'https://223.5.5.5/dns-query',
+        'https://223.6.6.6/dns-query',
+      ],
     );
   });
 
