@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:fl_clash/common/yaml.dart';
 import 'package:fl_clash/models/chain_proxy.dart';
 import 'package:yaml/yaml.dart';
@@ -347,10 +349,11 @@ String applyChainProxyYaml(
   final raw = Map<String, dynamic>.from(normalized);
   final proxies = List<dynamic>.from(raw['proxies'] as List? ?? const []);
   final groups = List<dynamic>.from(raw['proxy-groups'] as List? ?? const []);
+  final strictAndroidPrivacy = enforceAndroidPrivacy || Platform.isAndroid;
 
   if (settings.dnsLeakProtection) {
     _applyDnsLeakProtection(raw);
-    if (enforceAndroidPrivacy) {
+    if (strictAndroidPrivacy) {
       _applyAndroidTunnelPrivacy(raw);
     }
   }
@@ -363,7 +366,7 @@ String applyChainProxyYaml(
       settings,
       profileId,
     );
-    if (settings.dnsLeakProtection && enforceAndroidPrivacy) {
+    if (settings.dnsLeakProtection && strictAndroidPrivacy) {
       final landingTargets = (raw['proxies'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => item['name']?.toString() ?? '')
@@ -423,7 +426,7 @@ String applyChainProxyYaml(
   }
 
   raw['proxies'] = transformed;
-  if (settings.dnsLeakProtection && enforceAndroidPrivacy) {
+  if (settings.dnsLeakProtection && strictAndroidPrivacy) {
     _applyAndroidPrivacyRouting(raw, settings, profileId, landingTargets);
   }
   return yaml.encode(raw);
