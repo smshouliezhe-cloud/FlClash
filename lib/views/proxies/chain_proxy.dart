@@ -77,15 +77,55 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
 
     setState(() => _saving = true);
     try {
+      final setupAction = ref.read(setupActionProvider.notifier);
+      final androidLeakGuard = _enabled && system.isAndroid;
+      final restartForLeakGuard =
+          androidLeakGuard && ref.read(isStartProvider);
+
+      // Android's residential chain is treated as a leak-protected mode.
+      // VpnService.Builder.allowBypass() would let applications escape the
+      // tunnel, so chain mode explicitly disables it. DNS hijacking is also
+      // forced on so DNS traffic is handled inside the VPN/TUN path.
+      if (restartForLeakGuard) {
+        final stopped = await setupAction.setRunning(false);
+        if (!stopped) {
+          dialogs.showNotifier('无法重启 VPN/TUN，链式代理未应用');
+          return;
+        }
+      }
+
+      if (androidLeakGuard) {
+        ref
+            .read(vpnSettingProvider.notifier)
+            .update(
+              (state) => state.copyWith(
+                enable: true,
+                allowBypass: false,
+                dnsHijacking: true,
+              ),
+            );
+      }
+
       await preferences.saveChainProxySettings(profileId, settings);
-      final applied = await ref
-          .read(setupActionProvider.notifier)
-          .applyProfile(force: true);
+
+      final applied = restartForLeakGuard
+          ? await setupAction.setRunning(true)
+          : await setupAction.applyProfile(force: true);
       if (!applied) {
-        dialogs.showNotifier('链式代理应用失败，请检查当前配置和住宅 SOCKS5 参数');
+        dialogs.showNotifier(
+          androidLeakGuard
+              ? '链式代理应用失败，请检查 VPN/TUN 权限、当前配置和住宅 SOCKS5 参数'
+              : '链式代理应用失败，请检查当前配置和住宅 SOCKS5 参数',
+        );
         return;
       }
-      dialogs.showNotifier(_enabled ? '住宅落地代理已应用到当前订阅' : '链式代理已关闭');
+      dialogs.showNotifier(
+        _enabled
+            ? system.isAndroid
+                  ? '住宅落地代理已应用，VPN/TUN 防泄露保护已开启'
+                  : '住宅落地代理已应用到当前订阅'
+            : '链式代理已关闭',
+      );
       if (mounted) context.safeNestedPop();
     } catch (e) {
       dialogs.showNotifier('链式代理应用失败：$e');
@@ -124,10 +164,26 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('启用住宅落地代理'),
-              subtitle: const Text('机场当前节点 → 住宅 SOCKS5 → Internet'),
+              subtitle: Text(
+                system.isAndroid
+                    ? '机场当前节点 → 住宅 SOCKS5 → Internet；自动强制 VPN/TUN、防绕过和 DNS 劫持'
+                    : '机场当前节点 → 住宅 SOCKS5 → Internet',
+              ),
               value: _enabled,
               onChanged: (value) => setState(() => _enabled = value),
             ),
+            if (system.isAndroid && _enabled) ...[
+              const SizedBox(height: 8),
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text(
+                    '防泄露保护：VPN/TUN 模式将保持开启；“允许绕过”会被强制关闭；DNS 劫持会被强制开启。运行中保存时会自动重启一次 VPN/TUN，使保护立即生效。',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             TextFormField(
               controller: _serverController,
