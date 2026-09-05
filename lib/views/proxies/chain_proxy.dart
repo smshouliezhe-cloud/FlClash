@@ -82,11 +82,18 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
     try {
       await preferences.saveChainProxySettings(profileId, settings);
 
-      // Android's VpnService already points device DNS at a synthetic TUN DNS
-      // address. When chain DNS protection is enabled, also turn on FlClash's
-      // native all-port-53 hijacking so apps with a hard-coded plaintext DNS
-      // server cannot bypass the protected Mihomo resolver path.
+      // Strict Android leak protection is a TUN feature, not only a DNS
+      // resolver rewrite. Make the normal FlClash TUN switch effective before
+      // applying the profile so VpnService, routing and DNS hijacking all use
+      // the same path as when the user enables TUN manually.
       if (system.isAndroid && settings.enabled && settings.dnsLeakProtection) {
+        final patchConfig = ref.read(patchClashConfigProvider);
+        if (!patchConfig.tun.enable) {
+          ref
+              .read(patchClashConfigProvider.notifier)
+              .update((state) => state.copyWith.tun(enable: true));
+        }
+
         final vpnSetting = ref.read(vpnSettingProvider);
         if (!vpnSetting.dnsHijacking) {
           ref
@@ -102,7 +109,13 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
         dialogs.showNotifier('链式代理应用失败，请检查当前配置和住宅 SOCKS5 参数');
         return;
       }
-      dialogs.showNotifier(_enabled ? '住宅落地代理已应用到当前订阅' : '链式代理已关闭');
+      dialogs.showNotifier(
+        _enabled && _dnsLeakProtection && system.isAndroid
+            ? '住宅落地代理已应用，TUN 与 DNS 防泄漏已自动启用'
+            : _enabled
+            ? '住宅落地代理已应用到当前订阅'
+            : '链式代理已关闭',
+      );
       if (mounted) context.safeNestedPop();
     } catch (e) {
       dialogs.showNotifier('链式代理应用失败：$e');
@@ -218,7 +231,7 @@ class _ChainProxyViewState extends ConsumerState<ChainProxyView> {
               contentPadding: EdgeInsets.zero,
               title: const Text('DNS 防泄漏'),
               subtitle: const Text(
-                'Android 使用 TUN 劫持 53 端口，Mihomo 使用腾讯/阿里 DoH 解析；保留 FlClash 原生 DNS 结构，避免节点解析死循环',
+                'Android 开启后会自动启用 TUN 与 53 端口劫持，再由 Mihomo 加密解析；无需另外手动开启 TUN',
               ),
               value: _dnsLeakProtection,
               onChanged: _enabled
