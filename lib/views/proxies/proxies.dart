@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/state.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/views/proxies/chain_proxy.dart';
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/views/proxies/providers.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -63,6 +64,17 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
                 );
               },
             ),
+            if (system.isWindows || system.isAndroid)
+              CommonPopupMenuItem(
+                icon: Icons.account_tree_outlined,
+                label: '链式代理',
+                onPressed: () {
+                  showExtend(
+                    context,
+                    builder: (_) => const ChainProxyView(),
+                  );
+                },
+              ),
             if (_hasProviders)
               CommonPopupMenuItem(
                 icon: Icons.poll_outlined,
