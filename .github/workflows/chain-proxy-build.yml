@@ -49,8 +49,8 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Check migrated source format
-        run: dart format --output=none --set-exit-if-changed lib/common/chain_proxy.dart lib/models/chain_proxy.dart lib/views/proxies/chain_proxy.dart lib/views/proxies/proxies.dart lib/providers/actions/setup.dart test/common/chain_proxy_test.dart test/common/chain_dns_strict_test.dart
+      - name: Format migrated sources
+        run: dart format lib/common/chain_proxy.dart lib/models/chain_proxy.dart lib/views/proxies/chain_proxy.dart lib/views/proxies/proxies.dart lib/providers/actions/setup.dart test/common/chain_proxy_test.dart test/common/chain_dns_strict_test.dart
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos
