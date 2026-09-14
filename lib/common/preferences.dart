@@ -151,6 +151,39 @@ class Preferences {
     await sharedPreferencesIns?.setString(bootRecordKey, json.encode(record));
   }
 
+  Future<ChainProxySettings> getChainProxySettings(int profileId) async {
+    try {
+      final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+      final raw = sharedPreferencesIns?.getString('chain_proxy_$profileId');
+      if (raw == null || raw.isEmpty) {
+        return const ChainProxySettings();
+      }
+      final decoded = json.decode(raw);
+      if (decoded is! Map) {
+        return const ChainProxySettings();
+      }
+      return ChainProxySettings.fromJson(Map<String, Object?>.from(decoded));
+    } catch (e) {
+      commonPrint.log(
+        'getChainProxySettings error ${e.toString()}',
+        logLevel: LogLevel.warning,
+      );
+      return const ChainProxySettings();
+    }
+  }
+
+  Future<bool> saveChainProxySettings(
+    int profileId,
+    ChainProxySettings settings,
+  ) async {
+    final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+    return await sharedPreferencesIns?.setString(
+          'chain_proxy_$profileId',
+          json.encode(settings.toJson()),
+        ) ??
+        false;
+  }
+
   Future<void> clearPreferences() async {
     final sharedPreferencesIns = await sharedPreferencesCompleter.future;
     await sharedPreferencesIns?.clear();
