@@ -1,4 +1,5 @@
 export 'app.dart';
+export 'chain_proxy.dart';
 export 'changelog.dart';
 export 'clash_config.dart';
 export 'common.dart';
