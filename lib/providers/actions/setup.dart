@@ -213,14 +213,23 @@ class SetupAction extends _$SetupAction {
   Future<void> updateConfig() async {
     await globalState.safeRun(() async {
       final updateParams = ref.read(updateParamsProvider);
-      final shouldContinueSetup = await requestAdmin(updateParams.tun.enable);
+      final chainRequiresTun = await _chainRequiresAndroidTun(
+        ref.read(currentProfileIdProvider),
+      );
+      if (chainRequiresTun) {
+        _enforceAndroidChainVpn();
+      }
+      final requestedTunEnable = updateParams.tun.enable || chainRequiresTun;
+      final shouldContinueSetup = await requestAdmin(requestedTunEnable);
       if (!shouldContinueSetup) {
         await _restartCoreAfterAuthorization();
         return;
       }
       final message = await _core.updateConfig(
         updateParams.copyWith.tun(
-          enable: _getEffectiveTunEnable(updateParams.tun.enable),
+          enable: chainRequiresTun
+              ? true
+              : _getEffectiveTunEnable(requestedTunEnable),
         ),
       );
       ref.read(checkIpNumProvider.notifier).add();
@@ -261,10 +270,6 @@ class SetupAction extends _$SetupAction {
     });
   }
 
-  // False means building the profile, the config write, or the Core setup
-  // step failed; a profile that fails to build is still pushed to the Core
-  // as the empty config so it never keeps serving the previous one.
-  // authorizeCore failures still throw.
   Future<bool> applyProfile({
     bool silence = false,
     bool force = false,
@@ -297,7 +302,6 @@ class SetupAction extends _$SetupAction {
     if (result != _SetupTaskResult.handoffToCoreRestart) {
       return result;
     }
-    // Release the current serial task before restartCore reapplies the profile.
     final restarted = await _restartCoreAfterAuthorization();
     return restarted ? _SetupTaskResult.completed : _SetupTaskResult.failed;
   }
@@ -332,6 +336,11 @@ class SetupAction extends _$SetupAction {
     final appendSystemDns = networkSetting.appendSystemDns;
     final routeMode = networkSetting.routeMode;
     final configMap = await _core.getConfig(profileId);
+    final chainSettings = await preferences.getChainProxySettings(profileId);
+    final chainRequiresTun =
+        system.isAndroid &&
+        chainSettings.enabled &&
+        chainSettings.dnsLeakProtection;
     String? scriptContent;
     final List<Rule> addedRules = [];
     final List<ProxyGroup> proxyGroups = [];
@@ -344,15 +353,16 @@ class SetupAction extends _$SetupAction {
       proxyGroups.addAll(setupState.proxyGroups);
       rules.addAll(setupState.rules);
     }
+    final resolvedTun = patchConfig.tun.getRealTun(routeMode);
     final realPatchConfig = patchConfig.copyWith(
-      tun: patchConfig.tun.getRealTun(routeMode),
+      tun: chainRequiresTun ? resolvedTun.copyWith(enable: true) : resolvedTun,
     );
     Map<String, dynamic> rawConfig = configMap;
     if (scriptContent?.isNotEmpty == true) {
       rawConfig = await handleEvaluate(scriptContent!, rawConfig);
     }
     final directory = await appPath.profilesPath;
-    final res = makeRealProfileTask(
+    final res = await makeRealProfileTask(
       MakeRealProfileState(
         rules: rules,
         proxyGroups: proxyGroups,
@@ -368,7 +378,8 @@ class SetupAction extends _$SetupAction {
         matchTarget: setupState.matchTarget,
       ),
     );
-    return res;
+    final yaml = applyChainProxyYaml(res.yaml, chainSettings, profileId);
+    return (yaml: yaml, md5: yaml.toMd5());
   }
 
   Future<String> getProfileWithId(int profileId) async {
@@ -384,6 +395,18 @@ class SetupAction extends _$SetupAction {
       dialogs.showNotifier(e.toString(), level: MessageLevel.error);
     }
     return '';
+  }
+
+  Future<bool> _chainRequiresAndroidTun(int? profileId) async {
+    if (!system.isAndroid || profileId == null) return false;
+    final settings = await preferences.getChainProxySettings(profileId);
+    return settings.enabled && settings.dnsLeakProtection;
+  }
+
+  void _enforceAndroidChainVpn() {
+    ref.read(vpnSettingProvider.notifier).update(
+      (state) => state.copyWith(enable: true, dnsHijacking: true),
+    );
   }
 
   bool _getEffectiveTunEnable(bool enableTun) {
@@ -425,8 +448,6 @@ class SetupAction extends _$SetupAction {
     }
   }
 
-  /// An empty profile list is left alone: it is the first-run state, and it is
-  /// what the profile stream holds before its first emission.
   @visibleForTesting
   Profile? recoverMissingProfile() {
     final profileId = ref.read(currentProfileIdProvider);
@@ -449,7 +470,6 @@ class SetupAction extends _$SetupAction {
     FutureOr Function()? onUpdated,
   }) async {
     var profile = ref.read(currentProfileProvider) ?? recoverMissingProfile();
-    // A refresh failure is surfaced by safeRun; setup keeps the old profile.
     final nextProfile = await globalState.safeRun(
       () => profile?.checkAndUpdateAndCopy(
         validate: (path) => _core.validateConfig(path),
@@ -461,11 +481,18 @@ class SetupAction extends _$SetupAction {
     }
     commonPrint.log('setup ===> ${profile?.realLabel}');
     final patchConfig = ref.read(patchClashConfigProvider);
-    final shouldContinueSetup = await requestAdmin(patchConfig.tun.enable);
+    final chainRequiresTun = await _chainRequiresAndroidTun(profile?.id);
+    if (chainRequiresTun) {
+      _enforceAndroidChainVpn();
+    }
+    final requestedTunEnable = patchConfig.tun.enable || chainRequiresTun;
+    final shouldContinueSetup = await requestAdmin(requestedTunEnable);
     if (!shouldContinueSetup) {
       return _SetupTaskResult.handoffToCoreRestart;
     }
-    final effectiveTunEnable = _getEffectiveTunEnable(patchConfig.tun.enable);
+    final effectiveTunEnable = chainRequiresTun
+        ? true
+        : _getEffectiveTunEnable(requestedTunEnable);
     final realPatchConfig = patchConfig.copyWith.tun(
       enable: effectiveTunEnable,
     );
@@ -484,7 +511,6 @@ class SetupAction extends _$SetupAction {
       final sharedState = ref.read(sharedStateProvider);
       await preferences.saveShareState(sharedState);
     }
-    // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
     var setupFailed = false;
     await globalState.loadingRun(
